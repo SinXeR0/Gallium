@@ -3,40 +3,42 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0b0f">
+  <meta name="theme-color" content="#000000">
   <title>Gallium</title>
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/app.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <div id="app">
-    <nav class="sidebar" id="nav">
-      <a class="brand" href="#/"><span class="crown el">Ga</span><span class="label">Gallium</span></a>
-      <a href="#/" data-nav="home"><span class="ic">⌂</span><span class="label">Home</span></a>
-      <a href="#/shorts" data-nav="shorts"><span class="ic">▶</span><span class="label">Shorts</span></a>
-      <a href="#/watch" data-nav="watch"><span class="ic">▣</span><span class="label">Watch</span></a>
-      <a href="#/create" data-nav="create" class="create-btn"><span class="ic">＋</span><span class="label">Create</span></a>
-      <a href="#/music" data-nav="music"><span class="ic">♫</span><span class="label">Music</span></a>
-      <a href="#/messages" data-nav="messages"><span class="ic">✉</span><span class="label">Messages</span><span class="badge" id="unread" hidden></span></a>
-      <a href="#/controls" data-nav="controls" class="desktop-only"><span class="ic">⚙</span><span class="label">Feed controls</span></a>
-      <a href="#/roadmap" data-nav="roadmap" class="desktop-only"><span class="ic">★</span><span class="label">Roadmap</span></a>
-      <a href="#/me" data-nav="me" class="desktop-only"><span class="ic">◉</span><span class="label">Profile</span></a>
-    </nav>
-    <main id="view"></main>
-  </div>
+  <nav class="lnav" id="lnav" hidden aria-label="Main"></nav>
+  <aside class="rrail" id="rrail" aria-label="Feed filters"></aside>
+  <div class="grip l" id="grip-l"></div>
+  <div class="grip r" id="grip-r"></div>
+  <div id="scrim"></div>
+  <main>
+    <header class="topbar" id="topbar" hidden>
+      <button class="only-phone" id="open-l" aria-label="Open menu"><span class="tile"><small>31</small>Ga</span></button>
+      <h1 id="page-title">Home</h1>
+      <a class="top-btn" href="#/messages" aria-label="Messages" id="msg-btn"><span class="badge" id="unread" hidden></span></a>
+      <button class="top-btn only-phone" id="open-r" aria-label="Feed filters" hidden></button>
+    </header>
+    <div id="view"></div>
+  </main>
   <div id="player" class="player" hidden>
     <img id="player-cover" alt="">
     <div class="player-meta"><div id="player-title"></div><div id="player-artist" class="muted"></div></div>
-    <button id="player-toggle" class="icon-btn" aria-label="Play or pause">❚❚</button>
+    <button id="player-toggle" aria-label="Play or pause"></button>
     <input id="player-seek" type="range" min="0" max="100" value="0" aria-label="Seek">
-    <button id="player-close" class="icon-btn" aria-label="Close player">✕</button>
+    <button id="player-close" class="icon-btn" aria-label="Close player"></button>
     <audio id="audio" preload="metadata"></audio>
   </div>
   <div id="sheet-backdrop" hidden></div>
   <div id="sheet" class="sheet" hidden></div>
   <div id="toast" hidden></div>
-  <script src="/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -64,7 +64,12 @@ P.push(post('maya', 'photo', { body: 'City at night from the 40th floor.', media
 P.push(post('nova', 'track', { title: 'Study Session', media: 'track_lofi.mp3', cover: 'track_lofi.jpg', tags: ['lofi', 'study'], duration: 48 }));
 
 for (const pid of P) {
-  for (const u of Object.keys(ids)) if (u !== 'demo' && Math.random() < 0.45) db.prepare('INSERT OR IGNORE INTO likes (post_id, user_id) VALUES (?, ?)').run(pid, ids[u]);
+  for (const u of Object.keys(ids)) {
+    if (u === 'demo') continue;
+    const r = Math.random();
+    if (r < 0.45) db.prepare('INSERT OR IGNORE INTO likes (post_id, user_id) VALUES (?, ?)').run(pid, ids[u]);
+    else if (r < 0.55) db.prepare('INSERT OR IGNORE INTO dislikes (post_id, user_id) VALUES (?, ?)').run(pid, ids[u]);
+  }
 }
 const comment = (pid, u, body) => db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?, ?, ?)').run(pid, ids[u], body);
 comment(P[0], 'jaylen', 'Where is this?!');
@@ -91,6 +96,13 @@ rm('maya', 'idea', 'Group chats', 'Messaging with more than one person.', ['maya
 rm('nova', 'idea', 'Playlists and albums', 'Group tracks together and let listeners save them.', ['nova', 'maya', 'techtom']);
 rm('techtom', 'fix', 'Video quality picker', 'Let me choose 480p on mobile data.', ['techtom', 'astro_lee']);
 rm('chefkai', 'idea', 'Creator tips and memberships', 'A way for fans to support creators directly, no ads needed.', ['chefkai', 'nova']);
+
+// Reposts from creators the demo account subscribes to, and a starter folder.
+db.prepare('INSERT INTO reposts (post_id, user_id) VALUES (?, ?)').run(P[10], ids.maya);
+db.prepare('INSERT INTO reposts (post_id, user_id) VALUES (?, ?)').run(P[3], ids.nova);
+const wl = db.prepare("INSERT INTO folders (user_id, name) VALUES (?, 'Watch later')").run(ids.demo).lastInsertRowid;
+db.prepare('INSERT INTO saves (folder_id, post_id) VALUES (?, ?)').run(wl, P[6]);
+db.prepare("INSERT INTO folders (user_id, name) VALUES (?, 'Recipes')").run(ids.demo);
 
 db.close();
 console.log(`Seeded ${users.length} users and ${P.length} posts. Sign in as demo / gallium123`);

@@ -1,7 +1,7 @@
 // Browser-only stand-in for Gallium's server, so the app runs from a link with nothing installed.
 // Same routes and the same feed ranking as server.js; data lives in this browser.
 (function () {
-  const KEY = 'gallium-demo-v1';
+  const KEY = 'gallium-demo-v2';
   const KINDS = ['text', 'photo', 'short', 'video', 'track'];
   const kindLabel = (k) => ({ text: 'text posts', photo: 'photos', short: 'shorts', video: 'videos', track: 'music' }[k]);
   const stamp = (d = new Date()) => d.toISOString().replace('T', ' ').slice(0, 19);
@@ -39,7 +39,7 @@
 
   // ---------- seed ----------
   function seed() {
-    S = { seq: {}, users: [], posts: [], likes: [], comments: [], follows: [], prefs: [], hidden: [], messages: [], roadmap: [], votes: [], session: null };
+    S = { seq: {}, users: [], posts: [], likes: [], dislikes: [], reposts: [], folders: [], saves: [], reports: [], comments: [], follows: [], prefs: [], hidden: [], messages: [], roadmap: [], votes: [], session: null };
     const users = [
       ['demo', 'You (Demo)', 'Trying out Gallium.', '#f5b83d'],
       ['maya', 'Maya Torres', 'Food, travel, too much coffee.', '#ec4899'],
@@ -86,7 +86,16 @@
     P.push(post('techtom', 'text', { body: 'Reminder that you can turn off any whole format in Feed controls. Hate shorts? One tap and they are gone everywhere.', tags: ['gallium', 'tips'] }));
     P.push(post('maya', 'photo', { body: 'City at night from the 40th floor.', media: 'photo_city.jpg', tags: ['city', 'photography'] }));
     P.push(post('nova', 'track', { title: 'Study Session', media: 'track_lofi.mp3', cover: 'track_lofi.jpg', tags: ['lofi', 'study'], duration: 48 }));
-    for (const pid of P) for (const u of Object.keys(ids)) if (u !== 'demo' && Math.random() < 0.45) S.likes.push({ post_id: pid, user_id: ids[u] });
+    for (const pid of P) for (const u of Object.keys(ids)) {
+      if (u === 'demo') continue;
+      const r = Math.random();
+      if (r < 0.45) S.likes.push({ post_id: pid, user_id: ids[u] });
+      else if (r < 0.55) S.dislikes.push({ post_id: pid, user_id: ids[u] });
+    }
+    S.reposts.push({ post_id: P[10], user_id: ids.maya, created_at: stamp() }, { post_id: P[3], user_id: ids.nova, created_at: stamp() });
+    const wl = nextId('folders');
+    S.folders.push({ id: wl, user_id: ids.demo, name: 'Watch later', created_at: stamp() }, { id: nextId('folders'), user_id: ids.demo, name: 'Recipes', created_at: stamp() });
+    S.saves.push({ folder_id: wl, post_id: P[6], created_at: stamp() });
     const comment = (pid, u, body) => S.comments.push({ id: nextId('comments'), post_id: pid, user_id: ids[u], body, created_at: stamp() });
     comment(P[0], 'jaylen', 'Where is this?!');
     comment(P[0], 'astro_lee', 'Those colors are unreal.');
@@ -119,12 +128,17 @@
   const fail = (status, msg) => { throw new HttpError(status, msg); };
   const userById = (id) => S.users.find((u) => u.id === Number(id));
   const publicUser = (u) => u && ({ id: u.id, username: u.username, display_name: u.display_name, bio: u.bio, avatar_color: u.avatar_color });
-  const likeCount = (pid) => S.likes.filter((l) => l.post_id === pid).length;
+  const count = (table, pid) => S[table].filter((l) => l.post_id === pid).length;
+  const has = (table, pid, uid) => S[table].some((l) => l.post_id === pid && l.user_id === uid);
+  const likeCount = (pid) => count('likes', pid);
+  const myFolderIds = (uid) => new Set(S.folders.filter((f) => f.user_id === uid).map((f) => f.id));
   function hydrate(p, viewerId) {
+    const mine = myFolderIds(viewerId);
     return {
       ...p, tags: p.tags ? p.tags.split(',') : [], author: publicUser(userById(p.user_id)),
-      likes: likeCount(p.id), liked: S.likes.some((l) => l.post_id === p.id && l.user_id === viewerId),
-      comments: S.comments.filter((c) => c.post_id === p.id).length,
+      likes: count('likes', p.id), liked: has('likes', p.id, viewerId), dislikes: count('dislikes', p.id), disliked: has('dislikes', p.id, viewerId),
+      reposts: count('reposts', p.id), reposted: has('reposts', p.id, viewerId), comments: count('comments', p.id),
+      saved: S.saves.some((s) => s.post_id === p.id && mine.has(s.folder_id)),
     };
   }
   function loadPrefs(userId) {
@@ -135,6 +149,7 @@
     }
     p.hidden = new Set(S.hidden.filter((h) => h.user_id === userId).map((h) => h.post_id));
     p.following = new Set(S.follows.filter((f) => f.follower_id === userId).map((f) => String(f.followee_id)));
+    p.repostedBy = new Map(S.reposts.filter((r) => p.following.has(String(r.user_id))).map((r) => [r.post_id, userById(r.user_id)?.username]));
     return p;
   }
   // Same ranking as server.js rank(): Never rules filter first, then freshness, follows, popularity and boosts.
@@ -148,7 +163,9 @@
       let score = 10 / Math.pow(ageHours + 2, 0.5);
       const likes = likeCount(post.id);
       score += Math.log2(1 + likes) * 0.6;
-      if (prefs.following.has(String(post.user_id))) { score += 3; reasons.push('You follow this creator'); }
+      if (prefs.following.has(String(post.user_id))) { score += 3; reasons.push('You subscribe to this creator'); }
+      const reposter = prefs.repostedBy.get(post.id);
+      if (reposter && post.user_id !== viewerId) { score += 2; reasons.push(`Reposted by @${reposter}`); }
       const cw = prefs.boost.creator[String(post.user_id)];
       if (cw) { score += cw * 2; asked.push('this creator'); }
       const kw = prefs.boost.kind[post.kind];
@@ -215,7 +232,10 @@
     const kinds = String(query.get('kinds') || '').split(',').filter((k) => KINDS.includes(k));
     const posts = S.posts.filter((p) => !kinds.length || kinds.includes(p.kind));
     const limit = Math.min(Number(query.get('limit')) || 30, 100);
-    return rank(posts, loadPrefs(me.id), me.id).slice(0, limit).map((r) => ({ ...hydrate(r.post, me.id), why: r.reasons }));
+    const prefs = loadPrefs(me.id);
+    let ranked = rank(posts, prefs, me.id);
+    if (query.get('scope') === 'subs') ranked = ranked.filter((r) => prefs.following.has(String(r.post.user_id))).sort((a, b) => b.post.created_at.localeCompare(a.post.created_at));
+    return ranked.slice(0, limit).map((r) => ({ ...hydrate(r.post, me.id), why: r.reasons }));
   });
   on('GET', '/posts/:id', ({ me, params }) => { const p = S.posts.find((x) => x.id === +params.id); if (!p) fail(404, 'Not found'); return hydrate(p, me.id); });
   on('POST', '/posts/:id/more', ({ me, params }) => {
@@ -255,11 +275,60 @@
   on('DELETE', '/prefs/:id', ({ me, params }) => { S.prefs = S.prefs.filter((r) => !(r.id === +params.id && r.user_id === me.id)); return { ok: true }; });
   on('DELETE', '/hidden', ({ me }) => { S.hidden = S.hidden.filter((h) => h.user_id !== me.id); return { ok: true }; });
 
-  on('POST', '/posts/:id/like', ({ me, params }) => {
-    const pid = +params.id, had = S.likes.some((l) => l.post_id === pid && l.user_id === me.id);
-    if (had) S.likes = S.likes.filter((l) => !(l.post_id === pid && l.user_id === me.id)); else S.likes.push({ post_id: pid, user_id: me.id });
-    return { liked: !had, likes: likeCount(pid) };
+  const react = (table, other) => ({ me, params }) => {
+    const pid = +params.id, had = has(table, pid, me.id);
+    S[other] = S[other].filter((l) => !(l.post_id === pid && l.user_id === me.id));
+    if (had) S[table] = S[table].filter((l) => !(l.post_id === pid && l.user_id === me.id)); else S[table].push({ post_id: pid, user_id: me.id });
+    return { likes: count('likes', pid), liked: has('likes', pid, me.id), dislikes: count('dislikes', pid), disliked: has('dislikes', pid, me.id) };
+  };
+  on('POST', '/posts/:id/like', react('likes', 'dislikes'));
+  on('POST', '/posts/:id/dislike', react('dislikes', 'likes'));
+  on('POST', '/posts/:id/repost', ({ me, params }) => {
+    const pid = +params.id, had = has('reposts', pid, me.id);
+    if (had) S.reposts = S.reposts.filter((r) => !(r.post_id === pid && r.user_id === me.id)); else S.reposts.push({ post_id: pid, user_id: me.id, created_at: stamp() });
+    return { reposted: !had, reposts: count('reposts', pid) };
   });
+  on('POST', '/posts/:id/report', ({ me, params, body }) => {
+    const reason = String(body?.reason || '').trim(); if (!reason) fail(400, 'Pick a reason');
+    S.reports.push({ id: nextId('reports'), post_id: +params.id, user_id: me.id, reason, created_at: stamp() });
+    return { ok: true };
+  });
+  on('GET', '/posts/:id/interactions', ({ params }) => {
+    const pid = +params.id, people = (t) => S[t].filter((x) => x.post_id === pid).map((x) => publicUser(userById(x.user_id)));
+    return { likers: people('likes'), reposters: people('reposts'), likes: count('likes', pid), dislikes: count('dislikes', pid), reposts: count('reposts', pid), comments: count('comments', pid), saves: S.saves.filter((s) => s.post_id === pid).length };
+  });
+  const ensureFolders = (uid) => { if (!S.folders.some((f) => f.user_id === uid)) S.folders.push({ id: nextId('folders'), user_id: uid, name: 'Watch later', created_at: stamp() }); };
+  const postById = (id) => S.posts.find((p) => p.id === id);
+  on('GET', '/folders', ({ me, query }) => {
+    ensureFolders(me.id);
+    const pid = Number(query.get('post')) || 0;
+    return S.folders.filter((f) => f.user_id === me.id).map((f) => {
+      const inside = S.saves.filter((s) => s.folder_id === f.id).sort((a, b) => b.created_at.localeCompare(a.created_at));
+      const latest = inside[0] && postById(inside[0].post_id);
+      return { ...f, count: inside.length, cover: latest ? (latest.cover || (latest.kind === 'photo' ? latest.media : null)) : null, contains: inside.some((s) => s.post_id === pid) };
+    });
+  });
+  on('POST', '/folders', ({ me, body }) => {
+    const name = String(body?.name || '').trim().slice(0, 60); if (!name) fail(400, 'Name the folder');
+    const id = nextId('folders'); S.folders.push({ id, user_id: me.id, name, created_at: stamp() });
+    return { id, name };
+  });
+  on('DELETE', '/folders/:id', ({ me, params }) => {
+    S.folders = S.folders.filter((f) => !(f.id === +params.id && f.user_id === me.id));
+    S.saves = S.saves.filter((s) => s.folder_id !== +params.id);
+    return { ok: true };
+  });
+  on('GET', '/folders/:id', ({ me, params }) => {
+    const f = S.folders.find((x) => x.id === +params.id && x.user_id === me.id); if (!f) fail(404, 'Not found');
+    return { ...f, posts: S.saves.filter((s) => s.folder_id === f.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((s) => postById(s.post_id)).filter(Boolean).map((p) => hydrate(p, me.id)) };
+  });
+  on('POST', '/folders/:id/toggle', ({ me, params, body }) => {
+    const f = S.folders.find((x) => x.id === +params.id && x.user_id === me.id); if (!f) fail(404, 'Not found');
+    const pid = Number(body?.post_id), had = S.saves.some((s) => s.folder_id === f.id && s.post_id === pid);
+    if (had) S.saves = S.saves.filter((s) => !(s.folder_id === f.id && s.post_id === pid)); else S.saves.push({ folder_id: f.id, post_id: pid, created_at: stamp() });
+    return { saved: !had, folder: f.name };
+  });
+  on('GET', '/subscriptions', ({ me }) => S.follows.filter((f) => f.follower_id === me.id).map((f) => publicUser(userById(f.followee_id))).sort((a, b) => a.display_name.localeCompare(b.display_name)));
   on('GET', '/posts/:id/comments', ({ params }) => S.comments.filter((c) => c.post_id === +params.id).map((c) => { const u = userById(c.user_id); return { ...c, username: u.username, display_name: u.display_name, avatar_color: u.avatar_color }; }));
   on('POST', '/posts/:id/comments', ({ me, params, body }) => {
     const text = String(body?.body || '').trim(); if (!text) fail(400, 'Empty comment');
@@ -272,13 +341,14 @@
       user: publicUser(u), posts: S.posts.filter((p) => p.user_id === u.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((p) => hydrate(p, me.id)),
       followers: S.follows.filter((f) => f.followee_id === u.id).length, following: S.follows.filter((f) => f.follower_id === u.id).length,
       isFollowing: S.follows.some((f) => f.follower_id === me.id && f.followee_id === u.id),
+      reposts: S.reposts.filter((r) => r.user_id === u.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((r) => postById(r.post_id)).filter(Boolean).map((p) => hydrate(p, me.id)),
     };
   });
   on('POST', '/users/:id/follow', ({ me, params }) => {
-    const id = +params.id; if (id === me.id) fail(400, "You can't follow yourself");
+    const id = +params.id; if (id === me.id) fail(400, "You can't subscribe to yourself");
     const had = S.follows.some((f) => f.follower_id === me.id && f.followee_id === id);
     if (had) S.follows = S.follows.filter((f) => !(f.follower_id === me.id && f.followee_id === id)); else S.follows.push({ follower_id: me.id, followee_id: id });
-    return { following: !had };
+    return { following: !had, followers: S.follows.filter((f) => f.followee_id === id).length };
   });
   on('GET', '/search', ({ query }) => {
     const q = String(query.get('q') || '').toLowerCase();

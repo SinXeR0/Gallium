@@ -83,15 +83,23 @@ app.get('/api/me', auth, (req, res) => res.json(publicUser(req.user)));
 const KINDS = ['text', 'photo', 'short', 'video', 'track'];
 const parseTags = (s) => [...new Set(String(s || '').toLowerCase().match(/[a-z0-9_]+/g) || [])].slice(0, 8);
 
+const count = (table, postId) => db.prepare(`SELECT COUNT(*) n FROM ${table} WHERE post_id = ?`).get(postId).n;
+const has = (table, postId, userId) => !!db.prepare(`SELECT 1 FROM ${table} WHERE post_id = ? AND user_id = ?`).get(postId, userId);
+
 function hydrate(post, viewerId) {
   const author = db.prepare('SELECT * FROM users WHERE id = ?').get(post.user_id);
   return {
     ...post,
     tags: post.tags ? post.tags.split(',') : [],
     author: publicUser(author),
-    likes: db.prepare('SELECT COUNT(*) n FROM likes WHERE post_id = ?').get(post.id).n,
-    liked: !!db.prepare('SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?').get(post.id, viewerId),
-    comments: db.prepare('SELECT COUNT(*) n FROM comments WHERE post_id = ?').get(post.id).n,
+    likes: count('likes', post.id),
+    liked: has('likes', post.id, viewerId),
+    dislikes: count('dislikes', post.id),
+    disliked: has('dislikes', post.id, viewerId),
+    reposts: count('reposts', post.id),
+    reposted: has('reposts', post.id, viewerId),
+    comments: count('comments', post.id),
+    saved: !!db.prepare('SELECT 1 FROM saves s JOIN folders f ON f.id = s.folder_id WHERE s.post_id = ? AND f.user_id = ?').get(post.id, viewerId),
   };
 }
 
@@ -125,6 +133,8 @@ function loadPrefs(userId) {
   }
   p.hidden = new Set(db.prepare('SELECT post_id FROM hidden WHERE user_id = ?').all(userId).map((r) => r.post_id));
   p.following = new Set(db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(userId).map((r) => String(r.followee_id)));
+  p.repostedBy = new Map(db.prepare(`SELECT r.post_id, u.username FROM reposts r JOIN follows f ON f.followee_id = r.user_id AND f.follower_id = ?
+    JOIN users u ON u.id = r.user_id ORDER BY r.created_at`).all(userId).map((r) => [r.post_id, r.username]));
   return p;
 }
 
@@ -144,7 +154,9 @@ function rank(posts, prefs, viewerId) {
     let score = 10 / Math.pow(ageHours + 2, 0.5); // freshness
     const likes = db.prepare('SELECT COUNT(*) n FROM likes WHERE post_id = ?').get(post.id).n;
     score += Math.log2(1 + likes) * 0.6;
-    if (prefs.following.has(String(post.user_id))) { score += 3; reasons.push('You follow this creator'); }
+    if (prefs.following.has(String(post.user_id))) { score += 3; reasons.push('You subscribe to this creator'); }
+    const reposter = prefs.repostedBy.get(post.id);
+    if (reposter && post.user_id !== viewerId) { score += 2; reasons.push(`Reposted by @${reposter}`); }
     const cw = prefs.boost.creator[String(post.user_id)];
     if (cw) { score += cw * 2; asked.push('this creator'); }
     const kw = prefs.boost.kind[post.kind];
@@ -167,7 +179,10 @@ app.get('/api/feed', auth, (req, res) => {
   let sql = 'SELECT * FROM posts';
   if (kinds.length) sql += ` WHERE kind IN (${kinds.map(() => '?').join(',')})`;
   sql += ' ORDER BY created_at DESC LIMIT 500';
-  const ranked = rank(db.prepare(sql).all(...kinds), loadPrefs(req.user.id), req.user.id);
+  const prefs = loadPrefs(req.user.id);
+  let ranked = rank(db.prepare(sql).all(...kinds), prefs, req.user.id);
+  // Subscriptions: only creators you subscribe to, newest first, still respecting your Never rules.
+  if (req.query.scope === 'subs') ranked = ranked.filter((r) => prefs.following.has(String(r.post.user_id))).sort((a, b) => b.post.created_at.localeCompare(a.post.created_at));
   const limit = Math.min(Number(req.query.limit) || 30, 100);
   res.json(ranked.slice(0, limit).map((r) => ({ ...hydrate(r.post, req.user.id), why: r.reasons })));
 });
@@ -246,12 +261,79 @@ app.delete('/api/hidden', auth, (req, res) => {
 });
 
 // ---------- likes, comments, follows ----------
-app.post('/api/posts/:id/like', auth, (req, res) => {
-  const had = db.prepare('SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?').get(req.params.id, req.user.id);
-  if (had) db.prepare('DELETE FROM likes WHERE post_id = ? AND user_id = ?').run(req.params.id, req.user.id);
-  else db.prepare('INSERT INTO likes (post_id, user_id) VALUES (?, ?)').run(req.params.id, req.user.id);
-  res.json({ liked: !had, likes: db.prepare('SELECT COUNT(*) n FROM likes WHERE post_id = ?').get(req.params.id).n });
+// Like and dislike are both public counts and cancel each other out.
+function react(table, other) {
+  return (req, res) => {
+    const pid = Number(req.params.id), uid = req.user.id;
+    const had = has(table, pid, uid);
+    db.prepare(`DELETE FROM ${other} WHERE post_id = ? AND user_id = ?`).run(pid, uid);
+    if (had) db.prepare(`DELETE FROM ${table} WHERE post_id = ? AND user_id = ?`).run(pid, uid);
+    else db.prepare(`INSERT INTO ${table} (post_id, user_id) VALUES (?, ?)`).run(pid, uid);
+    res.json({ likes: count('likes', pid), liked: has('likes', pid, uid), dislikes: count('dislikes', pid), disliked: has('dislikes', pid, uid) });
+  };
+}
+app.post('/api/posts/:id/like', auth, react('likes', 'dislikes'));
+app.post('/api/posts/:id/dislike', auth, react('dislikes', 'likes'));
+app.post('/api/posts/:id/repost', auth, (req, res) => {
+  const pid = Number(req.params.id), had = has('reposts', pid, req.user.id);
+  if (had) db.prepare('DELETE FROM reposts WHERE post_id = ? AND user_id = ?').run(pid, req.user.id);
+  else db.prepare('INSERT INTO reposts (post_id, user_id) VALUES (?, ?)').run(pid, req.user.id);
+  res.json({ reposted: !had, reposts: count('reposts', pid) });
 });
+app.post('/api/posts/:id/report', auth, (req, res) => {
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) return res.status(400).json({ error: 'Pick a reason' });
+  db.prepare('INSERT INTO reports (post_id, user_id, reason) VALUES (?, ?, ?)').run(req.params.id, req.user.id, reason.slice(0, 500));
+  res.json({ ok: true });
+});
+// Who interacted: likes and reposts are public, dislikes and saves are shown as counts only.
+app.get('/api/posts/:id/interactions', auth, (req, res) => {
+  const pid = Number(req.params.id);
+  const people = (table) => db.prepare(`SELECT u.* FROM ${table} t JOIN users u ON u.id = t.user_id WHERE t.post_id = ?`).all(pid).map(publicUser);
+  res.json({
+    likers: people('likes'), reposters: people('reposts'), likes: count('likes', pid), dislikes: count('dislikes', pid),
+    reposts: count('reposts', pid), comments: count('comments', pid), saves: count('saves', pid),
+  });
+});
+
+// ---------- folders (saved posts) ----------
+function ensureFolders(userId) {
+  if (!db.prepare('SELECT 1 FROM folders WHERE user_id = ?').get(userId)) db.prepare("INSERT INTO folders (user_id, name) VALUES (?, 'Watch later')").run(userId);
+}
+app.get('/api/folders', auth, (req, res) => {
+  ensureFolders(req.user.id);
+  const postId = Number(req.query.post) || 0;
+  res.json(db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY id').all(req.user.id).map((f) => {
+    const latest = db.prepare('SELECT p.* FROM saves s JOIN posts p ON p.id = s.post_id WHERE s.folder_id = ? ORDER BY s.created_at DESC LIMIT 1').get(f.id);
+    return { ...f, count: db.prepare('SELECT COUNT(*) n FROM saves WHERE folder_id = ?').get(f.id).n, cover: latest ? (latest.cover || (latest.kind === 'photo' ? latest.media : null)) : null,
+      contains: !!db.prepare('SELECT 1 FROM saves WHERE folder_id = ? AND post_id = ?').get(f.id, postId) };
+  }));
+});
+app.post('/api/folders', auth, (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: 'Name the folder' });
+  const info = db.prepare('INSERT INTO folders (user_id, name) VALUES (?, ?)').run(req.user.id, name);
+  res.json({ id: Number(info.lastInsertRowid), name });
+});
+app.delete('/api/folders/:id', auth, (req, res) => {
+  db.prepare('DELETE FROM folders WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  res.json({ ok: true });
+});
+app.get('/api/folders/:id', auth, (req, res) => {
+  const f = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!f) return res.status(404).json({ error: 'Not found' });
+  res.json({ ...f, posts: db.prepare('SELECT p.* FROM saves s JOIN posts p ON p.id = s.post_id WHERE s.folder_id = ? ORDER BY s.created_at DESC').all(f.id).map((p) => hydrate(p, req.user.id)) });
+});
+app.post('/api/folders/:id/toggle', auth, (req, res) => {
+  const f = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!f) return res.status(404).json({ error: 'Not found' });
+  const pid = Number(req.body?.post_id);
+  const had = db.prepare('SELECT 1 FROM saves WHERE folder_id = ? AND post_id = ?').get(f.id, pid);
+  if (had) db.prepare('DELETE FROM saves WHERE folder_id = ? AND post_id = ?').run(f.id, pid);
+  else db.prepare('INSERT INTO saves (folder_id, post_id) VALUES (?, ?)').run(f.id, pid);
+  res.json({ saved: !had, folder: f.name });
+});
+
 app.get('/api/posts/:id/comments', auth, (req, res) => {
   res.json(db.prepare('SELECT c.*, u.username, u.display_name, u.avatar_color FROM comments c JOIN users u ON u.id = c.user_id WHERE post_id = ? ORDER BY c.created_at').all(req.params.id));
 });
@@ -270,15 +352,19 @@ app.get('/api/users/:username', auth, (req, res) => {
     followers: db.prepare('SELECT COUNT(*) n FROM follows WHERE followee_id = ?').get(u.id).n,
     following: db.prepare('SELECT COUNT(*) n FROM follows WHERE follower_id = ?').get(u.id).n,
     isFollowing: !!db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(req.user.id, u.id),
+    reposts: db.prepare('SELECT p.* FROM reposts r JOIN posts p ON p.id = r.post_id WHERE r.user_id = ? ORDER BY r.created_at DESC').all(u.id).map((p) => hydrate(p, req.user.id)),
   });
+});
+app.get('/api/subscriptions', auth, (req, res) => {
+  res.json(db.prepare('SELECT u.* FROM follows f JOIN users u ON u.id = f.followee_id WHERE f.follower_id = ? ORDER BY u.display_name').all(req.user.id).map(publicUser));
 });
 app.post('/api/users/:id/follow', auth, (req, res) => {
   const id = Number(req.params.id);
-  if (id === req.user.id) return res.status(400).json({ error: "You can't follow yourself" });
+  if (id === req.user.id) return res.status(400).json({ error: "You can't subscribe to yourself" });
   const had = db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(req.user.id, id);
   if (had) db.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').run(req.user.id, id);
   else db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').run(req.user.id, id);
-  res.json({ following: !had });
+  res.json({ following: !had, followers: db.prepare('SELECT COUNT(*) n FROM follows WHERE followee_id = ?').get(id).n });
 });
 app.patch('/api/me', auth, (req, res) => {
   const { display_name, bio } = req.body || {};

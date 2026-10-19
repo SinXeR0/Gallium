@@ -7,6 +7,8 @@ No ads, no paywalls, and a feed the user fully controls.
 
 `docs/` is a browser-only copy of Gallium (data stays in each visitor's browser) that GitHub Pages serves for free at https://sinxer0.github.io/Gallium/. Turn it on under Settings → Pages → Deploy from a branch → `main` → `/docs`.
 
+After changing anything in `public/` or `preview/mock-api.js`, run `scripts/build-preview.sh` to refresh `docs/`.
+
 ## Run it
 
 Easiest: install [Node.js](https://nodejs.org) (22.5 or newer), then double-click **Start Gallium (Mac).command** or **Start Gallium (Windows).bat**. The first start loads the demo content and opens your browser. See `HOW TO START.txt`.
