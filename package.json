@@ -1,0 +1,20 @@
+{
+  "name": "gallium",
+  "version": "0.1.0",
+  "description": "Gallium: one ad-free social app with a feed you control",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "seed": "node --no-warnings seed.js",
+    "dev": "node --no-warnings --watch server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^4.22.3",
+    "multer": "^1.4.4"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "private": true
+}
