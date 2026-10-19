@@ -43,6 +43,9 @@ const ICONS = {
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  link: '<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/>',
+  shield: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.3 7.5 9.5 4.3-1.2 7.5-4.9 7.5-9.5V6z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/>',
+  port: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v3h16v-3"/>',
   // folder icons
   star: '<path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/>',
   heart: '<path d="M12 20s-7.5-4.6-9-9.3C2 7.2 4.2 4.5 7.2 4.5c2 0 3.6 1.1 4.8 2.8 1.2-1.7 2.8-2.8 4.8-2.8 3 0 5.2 2.7 4.2 6.2C19.5 15.4 12 20 12 20z"/>',
@@ -137,6 +140,15 @@ function repostEl(p, reposter) {
   return el;
 }
 
+// Uploads ported from another platform say where they came from, and show that platform's own numbers separately.
+const PLAT = (k) => window.GalliumConnect?.PLATFORMS[k] || { name: k, unit: 'follower', color: '#8a9e9f' };
+const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+function sourceLine(p) {
+  if (!p.source_platform) return '';
+  const pl = PLAT(p.source_platform);
+  return `<div class="source" style="--pc:${pl.color}">${icon('port')}<span>Ported from <b>${esc(pl.name)}</b> · first posted ${fmtDay(p.source_date)}<br>On ${esc(pl.name)}: ${count(p.source_views, 'view')} · ${count(p.source_likes, 'like')} · ${count(p.source_comments, 'comment')}</span></div>`;
+}
+
 // ---------- sheets ----------
 function openSheet(html) {
   $('#sheet').innerHTML = html;
@@ -211,7 +223,7 @@ const fbadge = (f) => `<span class="fbadge ${f.icon_style === 'image' && f.icon_
 // The emoji list is ~40 KB, so it loads the first time someone opens the picker.
 function loadEmoji() {
   if (window.GALLIUM_EMOJI) return Promise.resolve(window.GALLIUM_EMOJI);
-  return (loadEmoji.p ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'emoji.js?v=1792442077'; sc.onload = () => ok(window.GALLIUM_EMOJI); sc.onerror = bad; document.head.append(sc); }));
+  return (loadEmoji.p ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'emoji.js?v=1792450900'; sc.onload = () => ok(window.GALLIUM_EMOJI); sc.onerror = bad; document.head.append(sc); }));
 }
 // ---------- color math for the wheel ----------
 function hsvToHex(h, s, v) {
@@ -391,6 +403,7 @@ function postEl(p, { reposter } = {}) {
     ${p.title && p.kind !== 'track' ? `<p class="post-title">${p.kind === 'video' ? `<a href="#/watch/${p.id}">${esc(p.title)}</a>` : esc(p.title)}</p>` : ''}
     ${p.body && p.kind !== 'video' && p.kind !== 'track' ? `<p class="post-body">${esc(p.body)}</p>` : ''}
     ${body}
+    ${sourceLine(p)}
     ${p.tags.length ? `<div class="tags">${p.tags.map((t) => `<a>#${esc(t)}</a>`).join('')}</div>` : ''}
     <div class="actions">${reactPill(p)}<button class="chip-btn" data-comments>${icon('comment')}<span>${fmtN(p.comments)}</span></button><span class="spacer"></span><button class="icon-btn" data-more aria-label="More options">${icon('more')}</button></div>`;
   wireReact(el, p);
@@ -456,6 +469,7 @@ async function watchView(id) {
     <div class="watch-body">
       <div class="watch-bar">${reactPill(p)}<span class="spacer"></span><button class="chip-btn" data-save aria-label="Save">${icon('save', p.saved ? 'fill' : '')}</button><button class="icon-btn" data-more aria-label="More options">${icon('more')}</button></div>
       <div class="desc" id="desc"><h1>${esc(p.title)}</h1><div class="meta">${ago(p.created_at)}${p.tags.length ? ' · ' + p.tags.map((t) => '#' + esc(t)).join(' ') : ''}</div>
+        ${sourceLine(p)}
         ${p.body ? `<div class="text">${esc(p.body)}</div><button class="toggle" id="desc-toggle">Show more</button>` : ''}</div>
       <div class="channel-card"><a href="#/u/${esc(p.author.username)}">${avatar(p.author, 'lg')}</a><a href="#/u/${esc(p.author.username)}"><b>${esc(p.author.display_name)}</b></a>
         <span class="muted" id="subs-n">${count(ch.followers, 'subscriber')}</span>
@@ -766,6 +780,127 @@ async function searchView(start) {
   if (q) bar.count(await run(q)); else draw();
 }
 
+// ---------- linked platforms ----------
+// Each linked platform keeps its own verified stats card. Gallium's own numbers stay the main ones.
+function linksBlock(links, mine) {
+  if (!links.length && !mine) return '';
+  return `<div class="links">${links.map((l) => { const pl = PLAT(l.platform); return `<div class="link-card" style="--pc:${pl.color}" data-lid="${l.id}">
+      <div class="lc-head"><b>${esc(pl.name)}</b><span class="muted">@${esc(l.handle)}</span><span class="verified">${icon('shield')}Verified</span></div>
+      <div class="lc-stats">${count(l.followers, pl.unit)} · ${count(l.uploads, 'upload')} · ${count(l.views, 'view')} · ${count(l.likes, 'like')} · ${count(l.comments, 'comment')}</div>
+      <div class="muted lc-when">Numbers from ${esc(pl.name)}, verified ${ago(l.verified_at)}</div>
+      ${mine ? `<div class="lc-row"><button class="btn small primary" data-port>${icon('port')}Port uploads</button><button class="btn small" data-tell>${icon('share')}Tell your fans</button><button class="btn small danger" data-unlink>Unlink</button></div>` : ''}</div>`; }).join('')}
+    ${mine ? `<button class="btn" id="addlink">${icon('link')}${links.length ? 'Link another platform' : 'Bring your channel from another platform'}</button>` : ''}</div>`;
+}
+function wireLinks(d, mine, refresh) {
+  if (!mine) return;
+  $('#addlink').onclick = () => linkSheet(refresh);
+  $$('.link-card').forEach((card) => {
+    const l = d.links.find((x) => x.id === +card.dataset.lid);
+    $('[data-port]', card).onclick = () => portSheet(l, refresh);
+    $('[data-tell]', card).onclick = () => tellSheet(l);
+    $('[data-unlink]', card).onclick = (e) => {
+      const b = e.currentTarget;
+      if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to unlink'; return; }
+      api('/links/' + l.id, { method: 'DELETE' }).then(() => { toast(`Unlinked ${PLAT(l.platform).name}. Ported uploads stay on Gallium.`); refresh(); });
+    };
+  });
+}
+// Linking: pick the platform, sign in there, and allow Gallium to read the channel. Only the owner can link it.
+function linkSheet(refresh) {
+  const P = window.GalliumConnect.PLATFORMS;
+  const sheet = openSheet(`<h3>Bring your channel</h3><p class="why">Link the account you already have. You'll sign in there to prove it's yours, so nobody can link a channel that isn't theirs.</p>
+    <div class="plat-grid">${Object.entries(P).map(([k, pl]) => `<button class="plat" data-p="${k}" style="--pc:${pl.color}"><span class="dot"></span>${esc(pl.name)}</button>`).join('')}</div>`);
+  $$('.plat', sheet).forEach((b) => (b.onclick = () => step2(b.dataset.p)));
+  const step2 = (k) => {
+    const pl = P[k];
+    sheet.innerHTML = `<h3>Link ${esc(pl.name)}</h3><p class="why">What's your handle on ${esc(pl.name)}?</p>
+      <form id="lf"><div class="field"><input name="handle" placeholder="@yourname" autocomplete="off" autocapitalize="off" spellcheck="false"></div><div class="err" id="lerr"></div>
+      <button class="btn primary block" style="--pc:${pl.color}">Sign in with ${esc(pl.name)}</button></form>`;
+    $('input', sheet).focus();
+    $('#lf', sheet).onsubmit = (e) => {
+      e.preventDefault();
+      const handle = e.target.handle.value.trim().replace(/^@/, '');
+      if (handle.length < 2) return ($('#lerr', sheet).textContent = 'Enter your handle');
+      consent(k, handle);
+    };
+  };
+  // Stands in for the platform's own sign-in page until Gallium has developer keys for it.
+  const consent = (k, handle) => {
+    const pl = P[k];
+    sheet.innerHTML = `<div class="consent" style="--pc:${pl.color}"><div class="c-brand">${esc(pl.name)}</div>
+      <p><b>Gallium</b> wants to:</p><ul><li>See your ${esc(pl.name)} channel name and stats</li><li>See your uploads so you can bring them over</li></ul>
+      <p class="muted">It can't post, edit or delete anything on ${esc(pl.name)}.</p>
+      <p class="demo-note">Preview: this sign-in is simulated. The real app opens ${esc(pl.name)}'s own sign-in page.</p>
+      <div class="err" id="lerr"></div>
+      <div class="lc-row"><button class="btn" id="deny">Cancel</button><button class="btn primary" id="allow">Allow as @${esc(handle)}</button></div></div>`;
+    $('#deny', sheet).onclick = closeSheet;
+    $('#allow', sheet).onclick = async () => {
+      try {
+        const l = await api('/links', { body: { platform: k, handle } });
+        sheet.innerHTML = `<h3>${icon('shield')} ${esc(pl.name)} verified</h3><p class="why">@${esc(l.handle)} is linked. Its stats now show on your channel as their own card, and nothing gets mixed into your Gallium numbers.</p>
+          <button class="btn primary block" id="portnow">${icon('port')}Port uploads now</button><button class="btn block" id="later" style="margin-top:8px">Later</button>`;
+        $('#portnow', sheet).onclick = () => portSheet(l, refresh);
+        $('#later', sheet).onclick = () => { closeSheet(); refresh(); };
+      } catch (err) { $('#lerr', sheet).textContent = err.message; }
+    };
+  };
+}
+// Pick single uploads or select all. Each one comes over on its own, so a big library takes a while.
+async function portSheet(l, refresh) {
+  const pl = PLAT(l.platform);
+  const sheet = openSheet(`<h3>Port from ${esc(pl.name)}</h3><div class="empty">Loading your uploads…</div>`);
+  const list = await api(`/links/${l.id}/uploads`);
+  const pick = new Set();
+  const left = list.filter((u) => !u.imported);
+  const thumb = (u) => (u.cover || (u.kind === 'photo' ? u.media : null));
+  sheet.innerHTML = `<h3>Port from ${esc(pl.name)}</h3><p class="why">${fmtN(list.length)} uploads on @${esc(l.handle)}${list.length - left.length ? `, ${fmtN(list.length - left.length)} already here` : ''}. Each keeps its original date and its ${esc(pl.name)} numbers.</p>
+    <div class="port-bar"><label class="chk"><input type="checkbox" id="pall" ${left.length ? '' : 'disabled'}><span>Select all</span></label><span class="muted" id="pn">0 selected</span></div>
+    <div class="port-list">${list.map((u) => `<label class="port-item ${u.imported ? 'done' : ''}"><input type="checkbox" data-sid="${esc(u.source_id)}" ${u.imported ? 'disabled checked' : ''}>
+      <span class="si-thumb">${thumb(u) ? `<img src="${media(thumb(u))}" alt="" loading="lazy">` : `<span class="si-text">${esc(u.body || '')}</span>`}<span class="si-kind">${icon(KIND[u.kind][1])}</span></span>
+      <span class="pi-meta"><b>${esc(u.title || u.body || KIND[u.kind][0])}</b><span class="muted">${KIND[u.kind][0]} · ${fmtDay(u.date)} · ${count(u.views, 'view')}</span>${u.imported ? '<span class="pi-done">Already on Gallium</span>' : ''}</span></label>`).join('')}</div>
+    <div class="port-go"><div class="progress" hidden><span></span></div><div class="muted" id="pstat"></div><button class="btn primary block" id="pgo" disabled>Port uploads</button></div>`;
+  const paint = () => {
+    $('#pn', sheet).textContent = `${fmtN(pick.size)} selected`;
+    $('#pgo', sheet).disabled = !pick.size;
+    $('#pgo', sheet).textContent = pick.size ? `Port ${fmtN(pick.size)} upload${pick.size === 1 ? '' : 's'}` : 'Port uploads';
+    $('#pall', sheet).checked = left.length > 0 && pick.size === left.length;
+  };
+  $$('[data-sid]:not(:disabled)', sheet).forEach((c) => (c.onchange = () => { c.checked ? pick.add(c.dataset.sid) : pick.delete(c.dataset.sid); paint(); }));
+  $('#pall', sheet).onchange = (e) => { $$('[data-sid]:not(:disabled)', sheet).forEach((c) => { c.checked = e.target.checked; c.checked ? pick.add(c.dataset.sid) : pick.delete(c.dataset.sid); }); paint(); };
+  $('#pgo', sheet).onclick = async () => {
+    const ids = list.filter((u) => pick.has(u.source_id)).reverse(); // oldest first, so newer uploads stay on top
+    $$('input', sheet).forEach((c) => (c.disabled = true));
+    $('#pgo', sheet).disabled = true;
+    const bar = $('.progress', sheet); bar.hidden = false;
+    let done = 0;
+    for (const u of ids) {
+      $('#pstat', sheet).textContent = `Porting ${fmtN(done + 1)} of ${fmtN(ids.length)}: ${u.title || u.body || KIND[u.kind][0]}`;
+      try { await api(`/links/${l.id}/import`, { body: { source_id: u.source_id } }); } catch (err) { $('#pstat', sheet).textContent = err.message; return; }
+      done++;
+      $('span', bar).style.width = (done / ids.length) * 100 + '%';
+      const row = $(`[data-sid="${CSS.escape(u.source_id)}"]`, sheet)?.closest('.port-item');
+      if (row) row.classList.add('done');
+    }
+    $('#pstat', sheet).textContent = `Done. ${fmtN(done)} upload${done === 1 ? '' : 's'} ported to your channel.`;
+    $('#pgo', sheet).disabled = false;
+    $('#pgo', sheet).textContent = 'See your channel';
+    $('#pgo', sheet).onclick = () => { closeSheet(); refresh(); };
+  };
+  paint();
+}
+// A ready-made post for the old platform, so active fans know where to find you.
+function tellSheet(l) {
+  const pl = PLAT(l.platform);
+  const url = location.href.split('#')[0] + '#/u/' + me.username;
+  const text = `I'm moving to Gallium! No ads, nothing creepy, and creators keep 90%+ of what fans send. Everything I've posted here is coming with me. Follow me there: ${url}`;
+  const sheet = openSheet(`<h3>Tell your fans on ${esc(pl.name)}</h3><p class="why">Post this as a community post or pinned post on ${esc(pl.name)}. Edit it however you like.</p>
+    <textarea id="tell" rows="5">${esc(text)}</textarea><button class="btn primary block" id="tcopy" style="margin-top:10px">${icon('share')}Copy post</button>`);
+  $('#tcopy', sheet).onclick = async () => {
+    const t = $('#tell', sheet).value;
+    try { await navigator.clipboard.writeText(t); toast('Copied. Paste it on ' + pl.name); } catch { $('#tell', sheet).select(); toast('Select the text and copy it'); }
+  };
+}
+
 async function channelView(username) {
   const d = await api('/users/' + encodeURIComponent(username));
   const mine = d.user.id === me.id;
@@ -777,6 +912,7 @@ async function channelView(username) {
     <div class="channel-head">${avatar(d.user, 'xl')}<h1>${esc(d.user.display_name)}</h1><div class="muted">@${esc(d.user.username)}</div>
       <div class="stats"><span id="subs-n">${count(d.followers, 'subscriber')}</span> · ${count(d.posts.length, 'upload')} · ${count(d.following, 'subscription')}</div>
       ${d.user.bio ? `<div class="bio">${esc(d.user.bio)}</div>` : ''}
+      ${linksBlock(d.links, mine)}
       <div class="row">${mine
         ? '<button class="btn" id="edit">Edit channel</button><button class="btn" id="logout">Sign out</button>' + (window.galliumReset ? '<button class="btn danger" id="reset">Reset demo</button>' : '')
         : `<button class="btn ${d.isFollowing ? '' : 'primary'}" id="sub">${d.isFollowing ? 'Subscribed' : 'Subscribe'}</button><a class="btn" href="#/messages/${d.user.id}">${icon('chat')}Message</a>`}</div></div>
@@ -800,6 +936,7 @@ async function channelView(username) {
     bar.count(q ? show() : (show(), null));
   }));
   show();
+  wireLinks(d, mine, () => channelView(username));
   if (mine) {
     $('#logout').onclick = async () => { await api('/logout', { method: 'POST' }); me = null; location.hash = '#/'; renderAuth(); };
     if ($('#reset')) $('#reset').onclick = () => { window.galliumReset(); toast('Demo reset'); location.hash = '#/'; boot(); };

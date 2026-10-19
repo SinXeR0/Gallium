@@ -41,6 +41,7 @@ On a phone on the same Wi-Fi, open `http://<your computer's IP>:3000` and use "A
 | History | Private watch, read and listen history, searchable, cleared in one tap |
 | Exact counts | Every number is shown to the last digit, never rounded to "1.2K" |
 | Reposts | A repost shows only the original's thumbnail and opens the original post |
+| Bring your channel | Link YouTube, TikTok, Instagram, X, Twitch or SoundCloud after signing in there (simulated until Gallium has developer keys). Each linked platform shows its own verified stats card; "Port uploads" picks single uploads or all of them, keeping original dates and that platform's numbers |
 
 ### How the feed works
 

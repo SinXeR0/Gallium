@@ -39,7 +39,7 @@
 
   // ---------- seed ----------
   function seed() {
-    S = { seq: {}, users: [], posts: [], likes: [], dislikes: [], reposts: [], folders: [], saves: [], reports: [], comments: [], follows: [], prefs: [], hidden: [], messages: [], roadmap: [], votes: [], history: [], session: null };
+    S = { seq: {}, users: [], posts: [], likes: [], dislikes: [], reposts: [], folders: [], saves: [], reports: [], comments: [], follows: [], prefs: [], hidden: [], messages: [], roadmap: [], votes: [], history: [], links: [], session: null };
     const users = [
       ['demo', 'You (Demo)', 'Trying out Gallium.', '#f5b83d'],
       ['maya', 'Maya Torres', 'Food, travel, too much coffee.', '#ec4899'],
@@ -131,6 +131,7 @@
   S = load();
   if (!S || !S.users) seed();
   S.history ||= []; // saved before history existed
+  S.links ||= [];
 
   // ---------- helpers ----------
   class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -417,7 +418,38 @@
       followers: S.follows.filter((f) => f.followee_id === u.id).length, following: S.follows.filter((f) => f.follower_id === u.id).length,
       isFollowing: S.follows.some((f) => f.follower_id === me.id && f.followee_id === u.id),
       reposts: S.reposts.filter((r) => r.user_id === u.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((r) => postById(r.post_id)).filter(Boolean).map((p) => hydrate(p, me.id)),
+      links: S.links.filter((l) => l.user_id === u.id).map(publicLink),
     };
+  });
+  // Linked platforms, mirroring server.js. Sign-in is simulated (see connect-demo.js).
+  const Connect = window.GalliumConnect;
+  const publicLink = ({ user_id, ...l }) => l;
+  const myLink = (me, id) => S.links.find((l) => l.id === +id && l.user_id === me.id) || fail(404, 'Not found');
+  on('GET', '/links', ({ me }) => S.links.filter((l) => l.user_id === me.id).map(publicLink));
+  on('POST', '/links', ({ me, body }) => {
+    const platform = String(body?.platform || ''), handle = Connect.cleanHandle(body?.handle);
+    if (!Connect.PLATFORMS[platform]) fail(400, 'Pick a platform');
+    if (handle.length < 2) fail(400, 'Enter your handle on that platform');
+    const taken = S.links.find((l) => l.platform === platform && l.handle.toLowerCase() === handle.toLowerCase());
+    if (taken) fail(400, taken.user_id === me.id ? 'You already linked that channel' : 'That channel is already linked to another Gallium account. If it is yours, report it so a person can check.');
+    const l = { id: nextId('links'), user_id: me.id, platform, handle, ...Connect.channel(platform, handle), verified_at: stamp() };
+    S.links.push(l);
+    return publicLink(l);
+  });
+  on('DELETE', '/links/:id', ({ me, params }) => { S.links = S.links.filter((l) => !(l.id === +params.id && l.user_id === me.id)); return { ok: true }; });
+  on('GET', '/links/:id/uploads', ({ me, params }) => {
+    const l = myLink(me, params.id), done = new Set(S.posts.filter((p) => p.user_id === me.id && p.source_id).map((p) => p.source_id));
+    return Connect.uploads(l.platform, l.handle).map((u) => ({ ...u, imported: done.has(u.source_id) }));
+  });
+  on('POST', '/links/:id/import', ({ me, params, body }) => {
+    const l = myLink(me, params.id), u = Connect.uploads(l.platform, l.handle).find((x) => x.source_id === body?.source_id);
+    if (!u) fail(404, 'That upload is not on the linked channel');
+    const had = S.posts.find((p) => p.user_id === me.id && p.source_id === u.source_id);
+    if (had) return { id: had.id, already: true };
+    const id = nextId('posts');
+    S.posts.push({ id, user_id: me.id, kind: u.kind, title: u.title, body: u.body, media: u.media, cover: u.cover, tags: '', duration: u.duration || null, created_at: u.date + ' 12:00:00',
+      source_platform: l.platform, source_id: u.source_id, source_date: u.date, source_views: u.views, source_likes: u.likes, source_comments: u.comments });
+    return { id };
   });
   on('POST', '/users/:id/follow', ({ me, params }) => {
     const id = +params.id; if (id === me.id) fail(400, "You can't subscribe to yourself");
