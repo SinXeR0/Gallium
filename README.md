@@ -37,6 +37,10 @@ On a phone on the same Wi-Fi, open `http://<your computer's IP>:3000` and use "A
 | Create | Upload any of the five formats; duration and a poster frame are read in the browser |
 | Feed controls | Every rule the algorithm uses, editable: block or boost topics, creators or whole formats |
 | Roadmap | Users suggest ideas or fixes and upvote them; the top of the list is what gets built next |
+| Search | A search bar on every page that lists things (each channel section, folders, history, chats, music, long-form, subscriptions, roadmap) plus a full search page. Every match shows up: each typed word has to appear in the title, text, tags or creator name |
+| History | Private watch, read and listen history, searchable, cleared in one tap |
+| Exact counts | Every number is shown to the last digit, never rounded to "1.2K" |
+| Reposts | A repost shows only the original's thumbnail and opens the original post |
 
 ### How the feed works
 
