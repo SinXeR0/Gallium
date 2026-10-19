@@ -297,10 +297,11 @@ app.get('/api/posts/:id/interactions', auth, (req, res) => {
 });
 
 // ---------- folders (saved posts) ----------
-// Folders nest without limit. Each one has its own order, color, icon, tile shape and layout for what's inside.
-const FOLDER_STYLE = { color: ['tq', 'pk', 'violet', 'blue', 'green', 'yellow', 'red', 'white'],
-  icon: ['folder', 'star', 'heart', 'music', 'film', 'book', 'chef', 'game', 'bolt', 'pin', 'bookmark', 'moon'],
-  layout: ['grid', 'list', 'large'], shape: ['rounded', 'square', 'circle'] };
+// Folders nest without limit. Each one has its own order, color (any hex), icon (any emoji, drawn as a
+// vector, as the device's own emoji, or an uploaded picture), tile shape and layout for what's inside.
+const FOLDER_STYLE = { layout: ['grid', 'list', 'large'], shape: ['rounded', 'square', 'circle'], icon_style: ['vector', 'native', 'image'] };
+const isHex = (c) => /^#[0-9a-f]{6}$/i.test(c);
+const isIcon = (i) => typeof i === 'string' && i.length > 0 && i.length <= 32 && !/[<>&"']/.test(i);
 function ensureFolders(userId) {
   if (!db.prepare('SELECT 1 FROM folders WHERE user_id = ?').get(userId)) db.prepare("INSERT INTO folders (user_id, name) VALUES (?, 'Watch later')").run(userId);
 }
@@ -323,6 +324,8 @@ function folderSummary(f, postId) {
 function cleanStyle(body) {
   const out = {};
   for (const k of Object.keys(FOLDER_STYLE)) if (FOLDER_STYLE[k].includes(body?.[k])) out[k] = body[k];
+  if (isHex(body?.color)) out.color = body.color.toLowerCase();
+  if (isIcon(body?.icon)) out.icon = body.icon;
   return out;
 }
 // Flat list of every folder (the app builds the tree). ?post= marks the folders that already hold that post.
@@ -336,10 +339,10 @@ app.post('/api/folders', auth, (req, res) => {
   if (!name) return res.status(400).json({ error: 'Name the folder' });
   const parent = req.body?.parent_id ? ownFolder(req.body.parent_id, req.user.id) : null;
   if (req.body?.parent_id && !parent) return res.status(404).json({ error: 'Folder not found' });
-  const style = { color: 'tq', icon: 'folder', layout: 'grid', shape: 'rounded', ...cleanStyle(req.body) };
+  const style = { color: '#7cfcfd', icon: '📁', icon_style: 'vector', layout: 'grid', shape: 'rounded', ...cleanStyle(req.body) };
   const pos = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 n FROM folders WHERE user_id = ? AND parent_id IS ?').get(req.user.id, parent?.id ?? null).n;
-  const info = db.prepare('INSERT INTO folders (user_id, name, parent_id, position, color, icon, layout, shape) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(req.user.id, name, parent?.id ?? null, pos, style.color, style.icon, style.layout, style.shape);
+  const info = db.prepare('INSERT INTO folders (user_id, name, parent_id, position, color, icon, icon_style, layout, shape) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, name, parent?.id ?? null, pos, style.color, style.icon, style.icon_style, style.layout, style.shape);
   res.json(ownFolder(info.lastInsertRowid, req.user.id));
 });
 // Rename, restyle or move a folder.
@@ -353,8 +356,19 @@ app.patch('/api/folders/:id', auth, (req, res) => {
     if (pid && (!ownFolder(pid, req.user.id) || subtreeIds(f.id).includes(pid))) return res.status(400).json({ error: "A folder can't go inside itself" });
     next.parent_id = pid;
   }
-  db.prepare('UPDATE folders SET name = ?, parent_id = ?, color = ?, icon = ?, layout = ?, shape = ? WHERE id = ?')
-    .run(next.name, next.parent_id, next.color, next.icon, next.layout, next.shape, f.id);
+  db.prepare('UPDATE folders SET name = ?, parent_id = ?, color = ?, icon = ?, icon_style = ?, layout = ?, shape = ? WHERE id = ?')
+    .run(next.name, next.parent_id, next.color, next.icon, next.icon_style, next.layout, next.shape, f.id);
+  res.json(ownFolder(f.id, req.user.id));
+});
+// A folder's icon can be any picture; it's private to the owner.
+app.post('/api/folders/:id/image', auth, upload.single('image'), (req, res) => {
+  const f = ownFolder(req.params.id, req.user.id);
+  const drop = () => req.file && fs.unlink(req.file.path, () => {});
+  if (!f) { drop(); return res.status(404).json({ error: 'Not found' }); }
+  if (!req.file || !req.file.mimetype.startsWith('image/')) { drop(); return res.status(400).json({ error: 'Pick an image' }); }
+  if (req.file.size > 10 * 1024 * 1024) { drop(); return res.status(400).json({ error: 'Images up to 10 MB' }); }
+  if (f.icon_image) fs.unlink(path.join(UPLOAD_DIR, path.basename(f.icon_image)), () => {});
+  db.prepare("UPDATE folders SET icon_image = ?, icon_style = 'image' WHERE id = ?").run(req.file.filename, f.id);
   res.json(ownFolder(f.id, req.user.id));
 });
 app.delete('/api/folders/:id', auth, (req, res) => {

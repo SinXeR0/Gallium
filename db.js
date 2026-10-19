@@ -49,6 +49,8 @@ function openDb(file) {
   addColumn('folders', "icon TEXT DEFAULT 'folder'");
   addColumn('folders', "layout TEXT DEFAULT 'grid'");
   addColumn('folders', "shape TEXT DEFAULT 'rounded'");
+  addColumn('folders', "icon_style TEXT DEFAULT 'vector'");
+  addColumn('folders', 'icon_image TEXT');
   addColumn('saves', 'position INTEGER DEFAULT 0');
   return db;
 }

@@ -102,16 +102,16 @@ db.prepare('INSERT INTO reposts (post_id, user_id) VALUES (?, ?)').run(P[10], id
 db.prepare('INSERT INTO reposts (post_id, user_id) VALUES (?, ?)').run(P[3], ids.nova);
 // Demo folders, nested a few levels deep with their own colors, icons and layouts.
 const folder = (name, style, parent, posts) => {
-  const id = db.prepare('INSERT INTO folders (user_id, name, parent_id, position, color, icon, layout, shape) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(ids.demo, name, parent, style.pos, style.color, style.icon, style.layout || 'grid', style.shape || 'rounded').lastInsertRowid;
+  const id = db.prepare('INSERT INTO folders (user_id, name, parent_id, position, color, icon, icon_style, layout, shape) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(ids.demo, name, parent, style.pos, style.color, style.icon, style.icon_style || 'vector', style.layout || 'grid', style.shape || 'rounded').lastInsertRowid;
   posts.forEach((pid, i) => db.prepare('INSERT INTO saves (folder_id, post_id, position) VALUES (?, ?, ?)').run(id, pid, i));
   return id;
 };
-folder('Watch later', { pos: 0, color: 'tq', icon: 'bookmark' }, null, [P[3], P[10]]);
-const food = folder('Food', { pos: 1, color: 'pk', icon: 'chef' }, null, [P[8]]);
-const quick = folder('Quick meals', { pos: 0, color: 'green', icon: 'bolt' }, food, [P[6]]);
-folder('Late night', { pos: 0, color: 'violet', icon: 'moon', shape: 'circle' }, quick, [P[16]]);
-folder('Study music', { pos: 2, color: 'violet', icon: 'music', layout: 'list' }, null, [P[22], P[14], P[9]]);
+folder('Watch later', { pos: 0, color: '#7cfcfd', icon: '🔖' }, null, [P[3], P[10]]);
+const food = folder('Food', { pos: 1, color: '#fd9efc', icon: '🍳', icon_style: 'native' }, null, [P[8]]);
+const quick = folder('Quick meals', { pos: 0, color: '#8ff0b0', icon: '⚡' }, food, [P[6]]);
+folder('Late night', { pos: 0, color: '#b9a2ff', icon: '🌙', shape: 'circle' }, quick, [P[16]]);
+folder('Study music', { pos: 2, color: '#ffb36b', icon: '🎧', layout: 'list' }, null, [P[22], P[14], P[9]]);
 
 db.close();
 console.log(`Seeded ${users.length} users and ${P.length} posts. Sign in as demo / gallium123`);

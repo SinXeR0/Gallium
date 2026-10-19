@@ -155,10 +155,104 @@ function folderTree(list, skip) {
   walk(0, 0);
   return out;
 }
+// Folder colors are any hex; older folders may still hold one of the original named colors.
 const FCOLORS = { tq: '#7cfcfd', pk: '#fd9efc', violet: '#b9a2ff', blue: '#82b8ff', green: '#8ff0b0', yellow: '#ffe27a', red: '#ff8a9a', white: '#ecfbfb' };
-const FICONS = ['folder', 'bookmark', 'star', 'heart', 'music', 'film', 'book', 'chef', 'game', 'bolt', 'pin', 'moon'];
-const fcolor = (f) => FCOLORS[f.color] || FCOLORS.tq;
-const fbadge = (f) => `<span class="fbadge" style="--fc:${fcolor(f)}">${icon(f.icon || 'folder')}</span>`;
+const isHex = (c) => /^#[0-9a-f]{6}$/i.test(c || '');
+const fcolor = (f) => (isHex(f.color) ? f.color : FCOLORS[f.color] || FCOLORS.tq);
+// A folder icon is any emoji, drawn as a single-color vector (tinted with the folder color), as the
+// device's own emoji, or an uploaded picture. Older folders may name one of the built-in line icons.
+function fglyph(f) {
+  if (f.icon_style === 'image' && f.icon_image) return `<img src="${f.icon_image.startsWith('blob:') ? f.icon_image : media(f.icon_image)}" alt="">`;
+  if (ICONS[f.icon] && f.icon_style !== 'native') return icon(f.icon);
+  return emo(ICONS[f.icon] ? '📁' : f.icon || '📁', f.icon_style === 'native');
+}
+// Vector style drops the emoji variation selector so the single-color font is used instead of the color one.
+const vec = (e) => e.replace(/\uFE0F/g, '');
+const emo = (e, native) => `<span class="emo ${native ? 'native' : 'vector'}">${esc(native ? e : vec(e))}</span>`;
+const fbadge = (f) => `<span class="fbadge ${f.icon_style === 'image' && f.icon_image ? 'pic' : ''}" style="--fc:${fcolor(f)}">${fglyph(f)}</span>`;
+// The emoji list is ~40 KB, so it loads the first time someone opens the picker.
+function loadEmoji() {
+  if (window.GALLIUM_EMOJI) return Promise.resolve(window.GALLIUM_EMOJI);
+  return (loadEmoji.p ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'emoji.js'; sc.onload = () => ok(window.GALLIUM_EMOJI); sc.onerror = bad; document.head.append(sc); }));
+}
+// ---------- color math for the wheel ----------
+function hsvToHex(h, s, v) {
+  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return '#' + [f(5), f(3), f(1)].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+}
+function hexToHsv(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+  let h = 0;
+  if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: (h * 60 + 360) % 360, s: max ? d / max : 0, v: max };
+}
+// Hue goes around the wheel, saturation out from the middle; the slider under it sets brightness.
+function colorWheel(root, start, onChange) {
+  root.innerHTML = `<div class="wheel"><div class="wheel-dim"></div><span class="wheel-dot"></span></div>
+    <input type="range" class="wheel-v" min="0" max="100" aria-label="Brightness">
+    <div class="hexrow"><span class="hex-swatch"></span><input class="hex-in" maxlength="7" spellcheck="false" autocomplete="off" aria-label="Hex code">
+      <button type="button" class="btn small" data-copy>Copy</button><button type="button" class="btn small" data-paste>Paste</button></div>`;
+  const wheel = $('.wheel', root), dot = $('.wheel-dot', root), dim = $('.wheel-dim', root), vIn = $('.wheel-v', root), hexIn = $('.hex-in', root), sw = $('.hex-swatch', root);
+  let hsv = hexToHsv(isHex(start) ? start : FCOLORS.tq);
+  const paint = (fromInput) => {
+    const hex = hsvToHex(hsv.h, hsv.s, hsv.v), rad = (hsv.h * Math.PI) / 180;
+    dot.style.left = 50 + 50 * hsv.s * Math.sin(rad) + '%';
+    dot.style.top = 50 - 50 * hsv.s * Math.cos(rad) + '%';
+    dot.style.background = hex;
+    dim.style.opacity = 1 - hsv.v;
+    vIn.value = Math.round(hsv.v * 100);
+    vIn.style.setProperty('--hue', hsvToHex(hsv.h, hsv.s, 1));
+    sw.style.background = hex;
+    if (!fromInput) hexIn.value = hex;
+    onChange(hex);
+  };
+  const pick = (e) => {
+    const r = wheel.getBoundingClientRect(), x = e.clientX - r.left - r.width / 2, y = e.clientY - r.top - r.height / 2;
+    hsv.h = ((Math.atan2(x, -y) * 180) / Math.PI + 360) % 360;
+    hsv.s = Math.min(1, Math.hypot(x, y) / (r.width / 2));
+    if (hsv.v < 0.15) hsv.v = 1;
+    paint();
+  };
+  wheel.onpointerdown = (e) => { wheel.setPointerCapture(e.pointerId); pick(e); wheel.onpointermove = pick; };
+  wheel.onpointerup = wheel.onpointercancel = () => (wheel.onpointermove = null);
+  vIn.oninput = () => { hsv.v = vIn.value / 100; paint(); };
+  const typed = (val) => {
+    let v = val.trim().toLowerCase();
+    if (!v.startsWith('#')) v = '#' + v;
+    if (/^#[0-9a-f]{3}$/.test(v)) v = '#' + [...v.slice(1)].map((c) => c + c).join('');
+    if (isHex(v)) { hsv = hexToHsv(v); paint(true); return true; }
+    return false;
+  };
+  hexIn.oninput = () => typed(hexIn.value);
+  hexIn.onblur = () => (hexIn.value = hsvToHex(hsv.h, hsv.s, hsv.v));
+  $('[data-copy]', root).onclick = async () => {
+    try { await navigator.clipboard.writeText(hexIn.value); toast(`Copied ${hexIn.value}`); } catch { hexIn.select(); toast('Select the code and copy it'); }
+  };
+  $('[data-paste]', root).onclick = async () => {
+    try { const t = await navigator.clipboard.readText(); if (typed(t)) hexIn.value = t.trim(); else toast(`"${t.slice(0, 12)}" isn't a hex code`); } catch { hexIn.focus(); toast('Paste into the code box'); }
+  };
+  paint();
+}
+// ---------- emoji picker: every emoji, searchable, shown in the folder's chosen style ----------
+async function emojiPicker(root, cur, onPick) {
+  root.innerHTML = `<input class="emo-search" type="search" placeholder="Search emoji" autocomplete="off"><div class="emo-tabs"></div><div class="emo-grid"><div class="empty">Loading…</div></div>`;
+  let groups;
+  try { groups = (await loadEmoji()).map(([name, list]) => [name, list.split('|').map((x) => { const i = x.indexOf(' '); return [x.slice(0, i), x.slice(i + 1)]; })]); }
+  catch { $('.emo-grid', root).innerHTML = '<div class="empty">Couldn’t load the emoji list.</div>'; return; }
+  let tab = 0;
+  const grid = $('.emo-grid', root), tabs = $('.emo-tabs', root), search = $('.emo-search', root);
+  const draw = (list) => { grid.innerHTML = list.map(([e, n]) => `<button type="button" title="${esc(n)}" data-e="${e}" class="${e === cur.icon ? 'on' : ''}"><span class="v">${vec(e)}</span><span class="n">${e}</span></button>`).join('') || '<div class="empty">No emoji match that.</div>'; };
+  const TAB = ['😀', '👋', '🐵', '🍇', '🌍', '⚽', '💡', '❤', '🏁'];
+  tabs.innerHTML = groups.map(([name], i) => `<button type="button" data-g="${i}" title="${name}" aria-label="${name}" class="${i ? '' : 'on'}">${TAB[i] || '•'}</button>`).join('');
+  $$('button', tabs).forEach((b) => (b.onclick = () => { tab = +b.dataset.g; search.value = ''; $$('button', tabs).forEach((x) => x.classList.toggle('on', x === b)); draw(groups[tab][1]); }));
+  search.oninput = () => {
+    const q = search.value.trim().toLowerCase();
+    draw(q ? groups.flatMap((g) => g[1]).filter(([e, n]) => n.includes(q)).slice(0, 300) : groups[tab][1]);
+  };
+  grid.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; $$('button.on', grid).forEach((x) => x.classList.remove('on')); b.classList.add('on'); onPick(b.dataset.e); };
+  draw(groups[0][1]);
+}
 async function saveSheet(p) {
   const folders = await api('/folders?post=' + p.id);
   const rows = folderTree(folders);
@@ -392,7 +486,7 @@ let folderFilter = '';
 function folderTile(f, reorder) {
   const bits = [f.total ? `${f.total} saved` : 'Empty', f.folders ? `${f.folders} folder${f.folders > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
   return `<div class="folder shape-${f.shape || 'rounded'}" style="--fc:${fcolor(f)}" data-fid="${f.id}">
-    <a href="#/folders/${f.id}" class="cover">${f.cover ? `<img src="${media(f.cover)}" alt="">` : ''}${fbadge(f)}</a>
+    <a href="#/folders/${f.id}" class="cover">${f.icon_style === 'image' && f.icon_image ? `<span class="pic-cover">${fglyph(f)}</span>` : (f.cover ? `<img src="${media(f.cover)}" alt="">` : '') + fbadge(f)}</a>
     <b>${esc(f.name)}</b><span class="muted">${bits}</span>
     ${reorder ? `<div class="mover"><button data-mv="-1" aria-label="Move earlier">${icon('arrowup')}</button><button data-mv="1" aria-label="Move later">${icon('arrowdown')}</button></div>` : ''}</div>`;
 }
@@ -448,7 +542,10 @@ function drawFolder(f) {
 // One sheet for making and customizing a folder: name, color, icon, tile shape, layout, and where it lives.
 async function folderSheet(f, { parentId = null, onDone } = {}) {
   const isNew = !f;
-  const cur = { name: '', color: 'tq', icon: 'folder', shape: 'rounded', layout: 'grid', parent_id: parentId, ...(f || {}) };
+  const cur = { name: '', color: '#7cfcfd', icon: '📁', icon_style: 'vector', icon_image: null, shape: 'rounded', layout: 'grid', parent_id: parentId, ...(f || {}) };
+  cur.color = fcolor(cur);
+  if (ICONS[cur.icon]) cur.icon = '📁';
+  let imageFile = null;
   const all = await api('/folders');
   const places = folderTree(all, f?.id);
   const pick = (key, opts, render) => `<div class="pickrow" data-key="${key}">${opts.map((o) => `<button type="button" class="pk-opt ${cur[key] === o ? 'on' : ''}" data-v="${o}">${render(o)}</button>`).join('')}</div>`;
@@ -456,8 +553,10 @@ async function folderSheet(f, { parentId = null, onDone } = {}) {
     <form id="fs" class="fs">
       <div class="fs-preview" id="fs-prev"></div>
       <div class="field"><label for="fs-name">Name</label><input id="fs-name" name="name" maxlength="60" value="${esc(cur.name)}" placeholder="Folder name" autocomplete="off"></div>
-      <div class="field"><label>Color</label>${pick('color', Object.keys(FCOLORS), (c) => `<span class="swatch" style="background:${FCOLORS[c]}"></span>`)}</div>
-      <div class="field"><label>Icon</label>${pick('icon', FICONS, (i) => icon(i))}</div>
+      <div class="field"><label>Color</label><div id="fs-color"></div></div>
+      <div class="field"><label>Icon</label>${pick('icon_style', ['vector', 'native', 'image'], (k) => ({ vector: 'Vector', native: 'Your device', image: 'Image' }[k]))}
+        <div id="fs-emoji" class="fs-emoji"></div>
+        <div id="fs-image" class="fs-image"><label class="btn"><input type="file" accept="image/*" id="fs-file" hidden>${icon('photo')}<span>${cur.icon_image ? 'Change picture' : 'Upload a picture'}</span></label><p class="muted">Any picture you want. Your folders are private.</p></div></div>
       <div class="field"><label>Tile shape</label>${pick('shape', ['rounded', 'square', 'circle'], (s) => `<span class="shape-demo ${s}"></span>${s[0].toUpperCase() + s.slice(1)}`)}</div>
       <div class="field"><label>Show saved items as</label>${pick('layout', ['grid', 'list', 'large'], (l) => icon(l) + { grid: 'Grid', list: 'List', large: 'Full posts' }[l])}</div>
       <div class="field"><label for="fs-parent">Inside</label><select id="fs-parent" name="parent"><option value="">Top level</option>${places.map((p) => `<option value="${p.id}" ${String(p.id) === String(cur.parent_id ?? '') ? 'selected' : ''}>${'– '.repeat(p.depth)}${esc(p.name)}</option>`).join('')}</select></div>
@@ -465,21 +564,38 @@ async function folderSheet(f, { parentId = null, onDone } = {}) {
       <button class="btn primary block">${isNew ? 'Create folder' : 'Save changes'}</button>
       ${isNew ? '' : `<button type="button" class="btn danger block" id="fs-del" style="margin-top:8px">${icon('trash')}Delete folder</button>`}
     </form>`);
-  const preview = () => { $('#fs-prev', sheet).innerHTML = folderTile({ ...cur, name: $('#fs-name', sheet).value || 'Folder name', total: f?.total || 0, folders: f?.folders || 0, cover: null }); };
+  const preview = () => {
+    $('#fs-prev', sheet).innerHTML = folderTile({ ...cur, name: $('#fs-name', sheet).value || 'Folder name', total: f?.total || 0, folders: f?.folders || 0, cover: null });
+    $('#fs-emoji', sheet).style.setProperty('--fc', cur.color);
+    $('#fs-emoji', sheet).classList.toggle('native', cur.icon_style === 'native');
+    $('#fs-emoji', sheet).hidden = cur.icon_style === 'image';
+    $('#fs-image', sheet).hidden = cur.icon_style !== 'image';
+  };
   $$('.pickrow', sheet).forEach((row) => $$('.pk-opt', row).forEach((b) => (b.onclick = () => {
     cur[row.dataset.key] = b.dataset.v;
     $$('.pk-opt', row).forEach((x) => x.classList.toggle('on', x === b));
     preview();
   })));
+  colorWheel($('#fs-color', sheet), cur.color, (hex) => { cur.color = hex; if ($('#fs-prev', sheet).firstChild) preview(); });
+  emojiPicker($('#fs-emoji', sheet), cur, (e) => { cur.icon = e; preview(); });
+  $('#fs-file', sheet).onchange = (e) => {
+    imageFile = e.target.files[0] || null;
+    if (!imageFile) return;
+    if (imageFile.size > 10 * 1024 * 1024) { imageFile = null; return toast('Images up to 10 MB'); }
+    cur.icon_image = URL.createObjectURL(imageFile);
+    preview();
+  };
   $('#fs-name', sheet).oninput = preview;
   preview();
   if (isNew) $('#fs-name', sheet).focus();
   $('#fs', sheet).onsubmit = async (e) => {
     e.preventDefault();
-    const body = { name: $('#fs-name', sheet).value.trim(), color: cur.color, icon: cur.icon, shape: cur.shape, layout: cur.layout, parent_id: $('#fs-parent', sheet).value || null };
+    const style = cur.icon_style === 'image' && !imageFile && !f?.icon_image ? 'vector' : cur.icon_style;
+    const body = { name: $('#fs-name', sheet).value.trim(), color: cur.color, icon: cur.icon, icon_style: style, shape: cur.shape, layout: cur.layout, parent_id: $('#fs-parent', sheet).value || null };
     if (!body.name) return ($('#fs-err', sheet).textContent = 'Name the folder');
     try {
-      const saved = isNew ? await api('/folders', { body }) : await api('/folders/' + f.id, { method: 'PATCH', body });
+      let saved = isNew ? await api('/folders', { body }) : await api('/folders/' + f.id, { method: 'PATCH', body });
+      if (imageFile && style === 'image') { const fd = new FormData(); fd.append('image', imageFile); saved = await api(`/folders/${saved.id}/image`, { body: fd }); }
       closeSheet(); toast(isNew ? `Made ${saved.name}` : 'Folder updated'); onDone?.(saved);
     } catch (err) { $('#fs-err', sheet).textContent = err.message; }
   };

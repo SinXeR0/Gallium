@@ -233,6 +233,7 @@ body.has-rrail .player { right: var(--rail-r); }
 .folder .cover { width: 100%; aspect-ratio: 4 / 3; border-radius: 18px; background: color-mix(in srgb, var(--fc) 9%, var(--surface)); border: 1.5px solid color-mix(in srgb, var(--fc) 45%, transparent); display: grid; place-items: center; overflow: hidden; position: relative; }
 .folder .cover img { position: absolute; inset: -12px; width: calc(100% + 24px); height: calc(100% + 24px); object-fit: cover; opacity: 0.5; filter: blur(7px) saturate(1.2); }
 .folder .cover .fbadge { position: relative; width: 52px; height: 52px; }
+.folder .cover .pic-cover, .folder .cover .pic-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: none; opacity: 1; }
 .folder.shape-square .cover { aspect-ratio: 1; border-radius: 6px; }
 .folder.shape-circle { align-items: center; text-align: center; }
 .folder.shape-circle .cover { aspect-ratio: 1; border-radius: 50%; width: 82%; margin: 0 auto; }
@@ -240,6 +241,38 @@ body.has-rrail .player { right: var(--rail-r); }
 .folder .muted { font-size: 12px; }
 .fbadge { display: inline-grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 30%; background: color-mix(in srgb, var(--fc) 18%, #000); color: var(--fc); }
 .fbadge svg { width: 58%; height: 58%; }
+.fbadge.pic { background: #000; overflow: hidden; }
+.fbadge img { width: 100%; height: 100%; object-fit: cover; }
+.emo { line-height: 1; font-size: calc(var(--emo, 1) * 1em); }
+.emo.vector { font-family: 'Noto Emoji', sans-serif; font-weight: 500; color: var(--fc); }
+.emo.native { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
+.fbadge .emo { font-size: 20px; }
+.folder .cover .fbadge .emo { font-size: 30px; }
+.fhead .fbadge .emo { font-size: 32px; }
+.wheel { position: relative; width: min(240px, 70vw); aspect-ratio: 1; margin: 6px auto 12px; border-radius: 50%; touch-action: none; cursor: crosshair;
+  background: radial-gradient(circle closest-side, #fff, rgba(255, 255, 255, 0)), conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.wheel-dim { position: absolute; inset: 0; border-radius: 50%; background: #000; pointer-events: none; }
+.wheel-dot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.6); pointer-events: none; }
+.wheel-v { -webkit-appearance: none; appearance: none; display: block; width: min(240px, 70vw); margin: 0 auto 12px; height: 14px; padding: 0; border-radius: 99px; border: 1px solid var(--line); background: linear-gradient(90deg, #000, var(--hue, #fff)); }
+.wheel-v::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #fff; border: 2px solid var(--ink); }
+.wheel-v::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 2px solid var(--ink); }
+.hexrow { display: flex; gap: 8px; align-items: center; }
+.hex-swatch { width: 40px; height: 40px; border-radius: 12px; flex: none; border: 1px solid var(--line); }
+.hex-in { font-family: ui-monospace, 'SF Mono', Menlo, monospace; text-transform: lowercase; min-width: 0; flex: 1; }
+.fs-emoji { margin-top: 10px; --fc: var(--tq); }
+.emo-search { margin-bottom: 8px; }
+.emo-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; margin-bottom: 6px; }
+.emo-tabs button { flex: none; width: 40px; height: 36px; border-radius: 10px; font-size: 20px; font-family: 'Noto Emoji', sans-serif; color: var(--muted); }
+.emo-tabs button.on { background: var(--surface-2); color: var(--tq); }
+.emo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 14px; padding: 6px; background: var(--bg); }
+.emo-grid button .n, .fs-emoji.native .emo-grid button .v { display: none; }
+.fs-emoji.native .emo-grid button .n { display: inline; }
+.emo-grid button { height: 42px; font-size: 24px; border-radius: 10px; font-family: 'Noto Emoji', sans-serif; font-weight: 500; color: var(--fc); }
+.fs-emoji.native .emo-grid button { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
+.emo-grid button.on { background: color-mix(in srgb, var(--tq) 18%, transparent); box-shadow: inset 0 0 0 2px var(--tq); }
+.emo-grid .empty { grid-column: 1 / -1; }
+.fs-image { margin-top: 10px; }
+.fs-image .muted { font-size: 12px; margin: 8px 0 0; }
 .mover { display: flex; gap: 6px; margin-top: 6px; }
 .mover button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); color: var(--tq); display: grid; place-items: center; }
 .mover button svg { width: 17px; height: 17px; }

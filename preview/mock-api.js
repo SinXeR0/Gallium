@@ -1,7 +1,7 @@
 // Browser-only stand-in for Gallium's server, so the app runs from a link with nothing installed.
 // Same routes and the same feed ranking as server.js; data lives in this browser.
 (function () {
-  const KEY = 'gallium-demo-v3';
+  const KEY = 'gallium-demo-v4';
   const KINDS = ['text', 'photo', 'short', 'video', 'track'];
   const kindLabel = (k) => ({ text: 'text posts', photo: 'photos', short: 'shorts', video: 'videos', track: 'music' }[k]);
   const stamp = (d = new Date()) => d.toISOString().replace('T', ' ').slice(0, 19);
@@ -95,15 +95,15 @@
     S.reposts.push({ post_id: P[10], user_id: ids.maya, created_at: stamp() }, { post_id: P[3], user_id: ids.nova, created_at: stamp() });
     const folder = (name, style, parent, posts) => {
       const id = nextId('folders');
-      S.folders.push({ id, user_id: ids.demo, name, parent_id: parent, position: style.pos, color: style.color, icon: style.icon, layout: style.layout || 'grid', shape: style.shape || 'rounded', created_at: stamp() });
+      S.folders.push({ id, user_id: ids.demo, name, parent_id: parent, position: style.pos, color: style.color, icon: style.icon, icon_style: style.icon_style || 'vector', icon_image: null, layout: style.layout || 'grid', shape: style.shape || 'rounded', created_at: stamp() });
       posts.forEach((pid, i) => S.saves.push({ folder_id: id, post_id: pid, position: i, created_at: stamp() }));
       return id;
     };
-    folder('Watch later', { pos: 0, color: 'tq', icon: 'bookmark' }, null, [P[3], P[10]]);
-    const food = folder('Food', { pos: 1, color: 'pk', icon: 'chef' }, null, [P[8]]);
-    const quick = folder('Quick meals', { pos: 0, color: 'green', icon: 'bolt' }, food, [P[6]]);
-    folder('Late night', { pos: 0, color: 'violet', icon: 'moon', shape: 'circle' }, quick, [P[16]]);
-    folder('Study music', { pos: 2, color: 'violet', icon: 'music', layout: 'list' }, null, [P[22], P[14], P[9]]);
+    folder('Watch later', { pos: 0, color: '#7cfcfd', icon: '🔖' }, null, [P[3], P[10]]);
+    const food = folder('Food', { pos: 1, color: '#fd9efc', icon: '🍳', icon_style: 'native' }, null, [P[8]]);
+    const quick = folder('Quick meals', { pos: 0, color: '#8ff0b0', icon: '⚡' }, food, [P[6]]);
+    folder('Late night', { pos: 0, color: '#b9a2ff', icon: '🌙', shape: 'circle' }, quick, [P[16]]);
+    folder('Study music', { pos: 2, color: '#ffb36b', icon: '🎧', layout: 'list' }, null, [P[22], P[14], P[9]]);
     const comment = (pid, u, body) => S.comments.push({ id: nextId('comments'), post_id: pid, user_id: ids[u], body, created_at: stamp() });
     comment(P[0], 'jaylen', 'Where is this?!');
     comment(P[0], 'astro_lee', 'Those colors are unreal.');
@@ -306,12 +306,12 @@
     return { likers: people('likes'), reposters: people('reposts'), likes: count('likes', pid), dislikes: count('dislikes', pid), reposts: count('reposts', pid), comments: count('comments', pid), saves: S.saves.filter((s) => s.post_id === pid).length };
   });
   // Folders nest without limit; mirrors the folder routes in server.js.
-  const FOLDER_STYLE = { color: ['tq', 'pk', 'violet', 'blue', 'green', 'yellow', 'red', 'white'],
-    icon: ['folder', 'star', 'heart', 'music', 'film', 'book', 'chef', 'game', 'bolt', 'pin', 'bookmark', 'moon'],
-    layout: ['grid', 'list', 'large'], shape: ['rounded', 'square', 'circle'] };
+  const FOLDER_STYLE = { layout: ['grid', 'list', 'large'], shape: ['rounded', 'square', 'circle'], icon_style: ['vector', 'native', 'image'] };
+  const isHex = (c) => /^#[0-9a-f]{6}$/i.test(c);
+  const isIcon = (i) => typeof i === 'string' && i.length > 0 && i.length <= 32 && !/[<>&"']/.test(i);
   const newFolder = (uid, name, parent_id = null, style = {}) => {
     const position = S.folders.filter((f) => f.user_id === uid && (f.parent_id ?? null) === parent_id).reduce((m, f) => Math.max(m, f.position ?? 0), -1) + 1;
-    const f = { id: nextId('folders'), user_id: uid, name, parent_id, position, color: 'tq', icon: 'folder', layout: 'grid', shape: 'rounded', ...style, created_at: stamp() };
+    const f = { id: nextId('folders'), user_id: uid, name, parent_id, position, color: '#7cfcfd', icon: '📁', icon_style: 'vector', icon_image: null, layout: 'grid', shape: 'rounded', ...style, created_at: stamp() };
     S.folders.push(f); return f;
   };
   const ensureFolders = (uid) => { if (!S.folders.some((f) => f.user_id === uid)) newFolder(uid, 'Watch later'); };
@@ -319,7 +319,12 @@
   const ownFolder = (id, uid) => S.folders.find((x) => x.id === Number(id) && x.user_id === uid);
   const bySpot = (a, b) => (a.position ?? 0) - (b.position ?? 0) || a.id - b.id;
   const subtreeIds = (id) => { const ids = [id]; for (let i = 0; i < ids.length; i++) S.folders.forEach((f) => f.parent_id === ids[i] && ids.push(f.id)); return ids; };
-  const cleanStyle = (body) => Object.fromEntries(Object.keys(FOLDER_STYLE).filter((k) => FOLDER_STYLE[k].includes(body?.[k])).map((k) => [k, body[k]]));
+  const cleanStyle = (body) => {
+    const out = Object.fromEntries(Object.keys(FOLDER_STYLE).filter((k) => FOLDER_STYLE[k].includes(body?.[k])).map((k) => [k, body[k]]));
+    if (isHex(body?.color)) out.color = body.color.toLowerCase();
+    if (isIcon(body?.icon)) out.icon = body.icon;
+    return out;
+  };
   const folderSummary = (f, pid) => {
     const tree = new Set(subtreeIds(f.id)), all = S.saves.filter((s) => tree.has(s.folder_id)).sort((a, b) => b.created_at.localeCompare(a.created_at));
     const latest = all[0] && postById(all[0].post_id);
@@ -363,6 +368,14 @@
     return { ...folderSummary(f), path, children: S.folders.filter((c) => c.parent_id === f.id).sort(bySpot).map((c) => folderSummary(c)),
       posts: S.saves.filter((s) => s.folder_id === f.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || b.created_at.localeCompare(a.created_at))
         .map((s) => postById(s.post_id)).filter(Boolean).map((p) => hydrate(p, me.id)) };
+  });
+  on('POST', '/folders/:id/image', ({ me, params, body }) => {
+    const f = ownFolder(params.id, me.id); if (!f) fail(404, 'Not found');
+    const file = body?.get?.('image');
+    if (!(file instanceof Blob) || !file.type.startsWith('image/')) fail(400, 'Pick an image');
+    if (file.size > 10 * 1024 * 1024) fail(400, 'Images up to 10 MB');
+    f.icon_image = storeFile(file); f.icon_style = 'image';
+    return f;
   });
   on('POST', '/folders/:id/reorder', ({ me, params, body }) => {
     const f = ownFolder(params.id, me.id); if (!f) fail(404, 'Not found');
