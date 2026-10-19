@@ -434,6 +434,48 @@ app.post('/api/posts/:id/comments', auth, (req, res) => {
   db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?, ?, ?)').run(req.params.id, req.user.id, body.slice(0, 2000));
   res.json({ ok: true });
 });
+// ---------- linked platforms: verify, show their stats, port uploads ----------
+// Sign-in is simulated until Gallium has developer keys for each platform (see public/connect-demo.js).
+const Connect = require('./public/connect-demo.js');
+const publicLink = (l) => ({ id: l.id, platform: l.platform, handle: l.handle, followers: l.followers, uploads: l.uploads, views: l.views, likes: l.likes, comments: l.comments, verified_at: l.verified_at });
+const myLink = (req) => db.prepare('SELECT * FROM linked_accounts WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+app.get('/api/links', auth, (req, res) => res.json(db.prepare('SELECT * FROM linked_accounts WHERE user_id = ? ORDER BY id').all(req.user.id).map(publicLink)));
+app.post('/api/links', auth, (req, res) => {
+  const platform = String(req.body?.platform || ''), handle = Connect.cleanHandle(req.body?.handle);
+  if (!Connect.PLATFORMS[platform]) return res.status(400).json({ error: 'Pick a platform' });
+  if (handle.length < 2) return res.status(400).json({ error: 'Enter your handle on that platform' });
+  // One owner per channel: a channel already linked to someone else can't be linked again.
+  const taken = db.prepare('SELECT user_id FROM linked_accounts WHERE platform = ? AND lower(handle) = lower(?)').get(platform, handle);
+  if (taken) return res.status(400).json({ error: taken.user_id === req.user.id ? 'You already linked that channel' : 'That channel is already linked to another Gallium account. If it is yours, report it so a person can check.' });
+  const s = Connect.channel(platform, handle);
+  const info = db.prepare('INSERT INTO linked_accounts (user_id, platform, handle, followers, uploads, views, likes, comments) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, platform, handle, s.followers, s.uploads, s.views, s.likes, s.comments);
+  res.json(publicLink(db.prepare('SELECT * FROM linked_accounts WHERE id = ?').get(info.lastInsertRowid)));
+});
+app.delete('/api/links/:id', auth, (req, res) => {
+  db.prepare('DELETE FROM linked_accounts WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  res.json({ ok: true });
+});
+app.get('/api/links/:id/uploads', auth, (req, res) => {
+  const l = myLink(req);
+  if (!l) return res.status(404).json({ error: 'Not found' });
+  const done = new Set(db.prepare('SELECT source_id FROM posts WHERE user_id = ? AND source_id IS NOT NULL').all(req.user.id).map((r) => r.source_id));
+  res.json(Connect.uploads(l.platform, l.handle).map((u) => ({ ...u, imported: done.has(u.source_id) })));
+});
+// One upload per call, so the app can show progress while a big library comes over.
+app.post('/api/links/:id/import', auth, (req, res) => {
+  const l = myLink(req);
+  if (!l) return res.status(404).json({ error: 'Not found' });
+  const u = Connect.uploads(l.platform, l.handle).find((x) => x.source_id === req.body?.source_id);
+  if (!u) return res.status(404).json({ error: 'That upload is not on the linked channel' });
+  const had = db.prepare('SELECT id FROM posts WHERE user_id = ? AND source_id = ?').get(req.user.id, u.source_id);
+  if (had) return res.json({ id: had.id, already: true });
+  const info = db.prepare(`INSERT INTO posts (user_id, kind, title, body, media, cover, duration, created_at, source_platform, source_id, source_date, source_views, source_likes, source_comments)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(req.user.id, u.kind, u.title, u.body, u.media, u.cover, u.duration || null, u.date + ' 12:00:00',
+    l.platform, u.source_id, u.date, u.views, u.likes, u.comments);
+  res.json({ id: Number(info.lastInsertRowid) });
+});
+
 app.get('/api/users/:username', auth, (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE username = ?').get(req.params.username.toLowerCase());
   if (!u) return res.status(404).json({ error: 'Not found' });
@@ -444,6 +486,7 @@ app.get('/api/users/:username', auth, (req, res) => {
     following: db.prepare('SELECT COUNT(*) n FROM follows WHERE follower_id = ?').get(u.id).n,
     isFollowing: !!db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(req.user.id, u.id),
     reposts: db.prepare('SELECT p.* FROM reposts r JOIN posts p ON p.id = r.post_id WHERE r.user_id = ? ORDER BY r.created_at DESC').all(u.id).map((p) => hydrate(p, req.user.id)),
+    links: db.prepare('SELECT * FROM linked_accounts WHERE user_id = ? ORDER BY id').all(u.id).map(publicLink),
   });
 });
 app.get('/api/subscriptions', auth, (req, res) => {
