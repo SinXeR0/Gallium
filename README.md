@@ -5,7 +5,7 @@ No ads, no paywalls, and a feed the user fully controls.
 
 ## Free preview site
 
-`docs/` is a browser-only copy of Gallium (data stays in each visitor's browser) that GitHub Pages serves for free at https://sinxer0.github.io/gallium/. Turn it on under Settings → Pages → Deploy from a branch → `main` → `/docs`.
+`docs/` is a browser-only copy of Gallium (data stays in each visitor's browser) that GitHub Pages serves for free at https://sinxer0.github.io/Gallium/. Turn it on under Settings → Pages → Deploy from a branch → `main` → `/docs`.
 
 ## Run it
 
