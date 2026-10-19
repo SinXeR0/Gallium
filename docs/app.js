@@ -41,6 +41,8 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   // folder icons
   star: '<path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/>',
   heart: '<path d="M12 20s-7.5-4.6-9-9.3C2 7.2 4.2 4.5 7.2 4.5c2 0 3.6 1.1 4.8 2.8 1.2-1.7 2.8-2.8 4.8-2.8 3 0 5.2 2.7 4.2 6.2C19.5 15.4 12 20 12 20z"/>',
@@ -95,9 +97,45 @@ function ago(ts) {
   return Math.floor(s / 86400) + 'd ago';
 }
 const fmtTime = (sec) => { sec = Math.round(sec || 0); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = String(sec % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`; };
-const fmtN = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n));
+// Every count on Gallium is exact, to the last digit. Never "1.2M".
+const fmtN = (n) => Number(n || 0).toLocaleString('en-US');
+const count = (n, word) => `<b>${fmtN(n)}</b> ${word}${n === 1 ? '' : 's'}`;
 const avatar = (u, cls = '') => `<span class="av ${cls}" style="background:${esc(u?.avatar_color || '#888')}">${esc((u?.display_name || u?.username || '?')[0].toUpperCase())}</span>`;
 const postLink = (p) => (p.kind === 'video' ? `#/watch/${p.id}` : p.kind === 'short' ? `#/shorts/${p.id}` : `#/p/${p.id}`);
+
+// Opening something adds it to your private watch history.
+const seen = (p) => api(`/posts/${p.id}/view`, { method: 'POST' }).catch(() => {});
+
+// ---------- search: one bar for every part of the app, and every match shows up ----------
+// Each word you type has to appear somewhere (title, text, tags or creator). No sampling, no "top results".
+const words = (q) => q.toLowerCase().split(/\s+/).filter(Boolean);
+const matches = (q, ...fields) => { const hay = fields.join(' ').toLowerCase(); return words(q).every((w) => hay.includes(w)); };
+const postMatches = (p, q) => matches(q, p.title, p.body, p.tags.join(' '), p.author.username, p.author.display_name);
+function searchBar(placeholder, onQuery, value = '') {
+  const bar = document.createElement('div');
+  bar.className = 'sbar';
+  bar.innerHTML = `${icon('search')}<input type="search" placeholder="${esc(placeholder)}" value="${esc(value)}" autocomplete="off" enterkeyhint="search" aria-label="${esc(placeholder)}"><span class="sbar-n" hidden></span><button type="button" class="sbar-x" aria-label="Clear search" ${value ? '' : 'hidden'}>${icon('close')}</button>`;
+  const input = $('input', bar), x = $('.sbar-x', bar);
+  x.onclick = () => { input.value = ''; input.dispatchEvent(new Event('input')); input.focus(); };
+  let timer, seq = 0;
+  // Results from an older, slower search never replace a newer one.
+  input.oninput = () => { x.hidden = !input.value; clearTimeout(timer); timer = setTimeout(async () => { const n = ++seq, q = input.value.trim(); const shown = await onQuery(q); if (n === seq) bar.count(q ? shown : null); }, 140); };
+  bar.count = (n) => { const c = $('.sbar-n', bar); c.hidden = n == null; c.textContent = n == null ? '' : `${fmtN(n)} result${n === 1 ? '' : 's'}`; };
+  bar.value = () => input.value.trim();
+  return bar;
+}
+
+// A repost is a shout-out: just the original's thumbnail, and tapping it opens the original post.
+function repostEl(p, reposter) {
+  const el = document.createElement('article');
+  el.className = 'post repost';
+  const cover = p.cover || (p.kind === 'photo' ? p.media : null);
+  const title = p.title || p.body || KIND[p.kind][0];
+  el.innerHTML = `<div class="reposted">${icon('repost')}@${esc(reposter)} reposted</div>
+    <a class="rp-card" href="${postLink(p)}"><span class="si-thumb ${p.kind === 'short' ? 'tall' : ''}">${cover ? `<img src="${media(cover)}" alt="" loading="lazy">` : `<span class="si-text">${esc(title.slice(0, 140))}</span>`}<span class="si-kind">${icon(KIND[p.kind][1])}</span></span>
+      <span class="rp-meta"><b>${esc(title.slice(0, 90))}</b><span class="muted">${avatar(p.author)}Original by @${esc(p.author.username)}</span><span class="rp-go">Open the original post</span></span></a>`;
+  return el;
+}
 
 // ---------- sheets ----------
 function openSheet(html) {
@@ -173,7 +211,7 @@ const fbadge = (f) => `<span class="fbadge ${f.icon_style === 'image' && f.icon_
 // The emoji list is ~40 KB, so it loads the first time someone opens the picker.
 function loadEmoji() {
   if (window.GALLIUM_EMOJI) return Promise.resolve(window.GALLIUM_EMOJI);
-  return (loadEmoji.p ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'emoji.js?v=1792424446'; sc.onload = () => ok(window.GALLIUM_EMOJI); sc.onerror = bad; document.head.append(sc); }));
+  return (loadEmoji.p ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'emoji.js?v=1792442077'; sc.onload = () => ok(window.GALLIUM_EMOJI); sc.onerror = bad; document.head.append(sc); }));
 }
 // ---------- color math for the wheel ----------
 function hsvToHex(h, s, v) {
@@ -362,10 +400,15 @@ function postEl(p, { reposter } = {}) {
   if (play) play.onclick = () => Player.play(p, [p]);
   return el;
 }
+// A post that reaches you only because someone you follow reposted it shows as a repost card.
 function renderPosts(list, box, empty) {
   box.innerHTML = '';
   if (!list.length) box.innerHTML = `<div class="empty">${empty}</div>`;
-  list.forEach((p) => box.append(postEl(p)));
+  list.forEach((p) => {
+    const by = (p.why || []).find((w) => w.startsWith('Reposted by @'));
+    const direct = (p.why || []).includes('You subscribe to this creator') || p.author.id === me.id;
+    box.append(by && !direct ? repostEl(p, by.slice('Reposted by @'.length)) : postEl(p));
+  });
 }
 
 // ---------- views ----------
@@ -384,6 +427,7 @@ async function homeView() {
 }
 async function postView(id) {
   const p = await api('/posts/' + id);
+  seen(p);
   view.innerHTML = `<div class="page"><div id="one"></div><div class="comments-panel" id="cbox"></div></div>`;
   $('#one').append(postEl(p));
   renderComments(p, $('#cbox'));
@@ -394,15 +438,18 @@ function vtile(p) {
     <span class="meta">${avatar(p.author)}<span><b>${esc(p.title)}</b><span class="muted">${esc(p.author.display_name)} · ${ago(p.created_at)} · ${fmtN(p.likes)} likes</span></span></span></a>`;
 }
 async function longView() {
-  view.innerHTML = `<div class="page wide"><div class="vgrid" id="grid"></div></div>`;
+  view.innerHTML = `<div class="page wide"><div id="sb"></div><div class="vgrid" id="grid"></div></div>`;
   const list = await api('/feed?kinds=video&limit=60');
-  $('#grid').innerHTML = list.map(vtile).join('') || '<div class="empty">No long-form videos yet.</div>';
+  const draw = (items, q) => ($('#grid').innerHTML = items.map(vtile).join('') || `<div class="empty">${q ? `No long-form videos match “${esc(q)}”.` : 'No long-form videos yet.'}</div>`);
+  $('#sb').replaceWith(searchBar('Search all long-form', async (q) => { const items = q ? (await api('/search?kinds=video&q=' + encodeURIComponent(q))).posts : list; draw(items, q); return items.length; }));
+  draw(list);
 }
 // The watch page follows the user's sketch: player, likes and dislikes with •••, description, channel, comments, then the next videos.
 async function watchView(id) {
   const [p, rest] = await Promise.all([api('/posts/' + id), api('/feed?kinds=video&limit=20')]);
   const ch = await api('/users/' + encodeURIComponent(p.author.username));
   Player.pause();
+  seen(p);
   setTitle(p.title);
   view.innerHTML = `<div class="watch">
     <video class="watch-player" src="${media(p.media)}" poster="${media(p.cover)}" controls autoplay playsinline></video>
@@ -411,7 +458,7 @@ async function watchView(id) {
       <div class="desc" id="desc"><h1>${esc(p.title)}</h1><div class="meta">${ago(p.created_at)}${p.tags.length ? ' · ' + p.tags.map((t) => '#' + esc(t)).join(' ') : ''}</div>
         ${p.body ? `<div class="text">${esc(p.body)}</div><button class="toggle" id="desc-toggle">Show more</button>` : ''}</div>
       <div class="channel-card"><a href="#/u/${esc(p.author.username)}">${avatar(p.author, 'lg')}</a><a href="#/u/${esc(p.author.username)}"><b>${esc(p.author.display_name)}</b></a>
-        <span class="muted"><span id="subs-n">${fmtN(ch.followers)}</span> subscribers</span>
+        <span class="muted" id="subs-n">${count(ch.followers, 'subscriber')}</span>
         ${p.author.id === me.id ? '' : `<button class="btn ${ch.isFollowing ? '' : 'primary'}" id="sub">${ch.isFollowing ? 'Subscribed' : 'Subscribe'}</button>`}</div>
       <button class="comments-bar" id="cbar">${icon('comment')}Comments <span class="count">${fmtN(p.comments)}</span></button>
       <div class="comments-panel" id="cbox" hidden></div>
@@ -422,7 +469,7 @@ async function watchView(id) {
   $('[data-more]').onclick = () => moreMenu(p, () => (location.hash = '#/long'));
   $('[data-save]').onclick = () => saveSheet(p);
   if ($('#desc-toggle')) $('#desc-toggle').onclick = (e) => { const d = $('#desc'); d.classList.toggle('open'); e.target.textContent = d.classList.contains('open') ? 'Show less' : 'Show more'; };
-  if ($('#sub')) $('#sub').onclick = async (e) => { const r = await api(`/users/${p.author.id}/follow`, { method: 'POST' }); e.target.textContent = r.following ? 'Subscribed' : 'Subscribe'; e.target.classList.toggle('primary', !r.following); $('#subs-n').textContent = fmtN(r.followers); };
+  if ($('#sub')) $('#sub').onclick = async (e) => { const r = await api(`/users/${p.author.id}/follow`, { method: 'POST' }); e.target.textContent = r.following ? 'Subscribed' : 'Subscribe'; e.target.classList.toggle('primary', !r.following); $('#subs-n').innerHTML = count(r.followers, 'subscriber'); };
   $('#cbar').onclick = () => { const box = $('#cbox'); box.hidden = !box.hidden; if (!box.hidden) renderComments(p, box); };
 }
 
@@ -435,6 +482,7 @@ async function shortsView(startId) {
   for (const p of list) {
     const s = document.createElement('section');
     s.className = 'short';
+    s.dataset.id = p.id;
     s.innerHTML = `<div class="short-frame">
       <video src="${media(p.media)}" poster="${media(p.cover)}" loop playsinline preload="metadata"></video>
       <div class="tap-hint">${icon('play')}</div>
@@ -457,26 +505,32 @@ async function shortsView(startId) {
   }
   const io = new IntersectionObserver((entries) => entries.forEach((en) => {
     const v = $('video', en.target);
-    if (en.isIntersecting) { Player.pause(); v.play().catch(() => en.target.classList.add('paused')); } else v.pause();
+    if (en.isIntersecting) { Player.pause(); v.play().catch(() => en.target.classList.add('paused')); seen({ id: en.target.dataset.id }); } else v.pause();
   }), { threshold: 0.6 });
   $$('.short', wrap).forEach((s) => io.observe(s));
   cleanup = () => { io.disconnect(); $$('video', wrap).forEach((v) => v.pause()); };
 }
 
 async function musicView() {
-  const tracks = await api('/feed?kinds=track&limit=100');
+  const all = await api('/feed?kinds=track&limit=100');
+  let tracks = all;
   view.innerHTML = `<div class="page">
     <div class="music-hero">${icon('music')}<div><h1>Music</h1><div class="muted">Tracks from creators on Gallium, ranked by your taste.</div>
       <button class="btn primary" style="margin-top:12px" id="playall">${icon('play')}Play all</button></div></div>
-    <div id="tracks">${tracks.map((t, i) => `<div class="track" data-i="${i}" data-id="${t.id}"><img src="${media(t.cover)}" alt=""><div style="min-width:0"><b>${esc(t.title)}</b><div class="muted">${esc(t.author.display_name)} · ${t.tags.map((x) => '#' + esc(x)).join(' ')}</div></div>
-      <span class="muted">${fmtTime(t.duration)}</span><button class="icon-btn" data-more aria-label="More options">${icon('more')}</button></div>`).join('') || '<div class="empty">No tracks yet.</div>'}</div></div>`;
-  $$('.track').forEach((row) => {
-    const t = tracks[row.dataset.i];
-    row.onclick = (e) => { if (e.target.closest('button')) return; Player.play(t, tracks); };
-    $('[data-more]', row).onclick = () => moreMenu(t, () => row.remove());
-  });
-  if ($('#playall')) $('#playall').onclick = () => tracks.length && Player.play(tracks[0], tracks);
-  Player.highlight();
+    <div id="sb"></div><div id="tracks"></div></div>`;
+  const draw = (q) => {
+    $('#tracks').innerHTML = tracks.map((t, i) => `<div class="track" data-i="${i}" data-id="${t.id}"><img src="${media(t.cover)}" alt=""><div style="min-width:0"><b>${esc(t.title)}</b><div class="muted">${esc(t.author.display_name)} · ${t.tags.map((x) => '#' + esc(x)).join(' ')}</div></div>
+      <span class="muted">${fmtTime(t.duration)}</span><button class="icon-btn" data-more aria-label="More options">${icon('more')}</button></div>`).join('') || `<div class="empty">${q ? `No tracks match “${esc(q)}”.` : 'No tracks yet.'}</div>`;
+    $$('.track').forEach((row) => {
+      const t = tracks[row.dataset.i];
+      row.onclick = (e) => { if (e.target.closest('button')) return; Player.play(t, tracks); };
+      $('[data-more]', row).onclick = () => moreMenu(t, () => row.remove());
+    });
+    Player.highlight();
+  };
+  $('#sb').replaceWith(searchBar('Search all music', async (q) => { tracks = q ? (await api('/search?kinds=track&q=' + encodeURIComponent(q))).posts : all; draw(q); return tracks.length; }));
+  $('#playall').onclick = () => tracks.length && Player.play(tracks[0], tracks);
+  draw();
 }
 
 // Folders are their own space: folders inside folders, each with its own color, icon, tile shape,
@@ -484,7 +538,7 @@ async function musicView() {
 const FKINDS = [['', 'Everything', 'sparkle'], ['text,photo', 'Posts', 'text'], ['short', 'Shorts', 'shorts'], ['video', 'Long-form', 'book'], ['track', 'Music', 'music']];
 let folderFilter = '';
 function folderTile(f, reorder) {
-  const bits = [f.total ? `${f.total} saved` : 'Empty', f.folders ? `${f.folders} folder${f.folders > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+  const bits = [f.total ? `${fmtN(f.total)} saved` : 'Empty', f.folders ? `${fmtN(f.folders)} folder${f.folders > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
   return `<div class="folder shape-${f.shape || 'rounded'}" style="--fc:${fcolor(f)}" data-fid="${f.id}">
     <a href="#/folders/${f.id}" class="cover">${f.icon_style === 'image' && f.icon_image ? `<span class="pic-cover">${fglyph(f)}</span>` : (f.cover ? `<img src="${media(f.cover)}" alt="">` : '') + fbadge(f)}</a>
     <b>${esc(f.name)}</b><span class="muted">${bits}</span>
@@ -505,17 +559,20 @@ function folderRail(f) {
     ${FKINDS.map(([k, l, ic]) => `<button class="ftab ${k === folderFilter ? 'on' : ''}" data-k="${k}">${icon(ic)}<span class="grow">${l}</span><small>${n(k)}</small></button>`).join('')}`;
   $$('#rrail .ftab').forEach((b) => (b.onclick = () => { folderFilter = b.dataset.k; closeDrawers(); folderRail(f); drawFolder(f); }));
 }
-let folderReorder = false;
+let folderReorder = false, folderQuery = '';
 function drawFolder(f) {
-  const items = folderFilter ? f.posts.filter((p) => folderFilter.split(',').includes(p.kind)) : f.posts;
+  const q = folderQuery;
+  const items = f.posts.filter((p) => (!folderFilter || folderFilter.split(',').includes(p.kind)) && (!q || postMatches(p, q)));
+  const kids = q ? f.children.filter((c) => matches(q, c.name)) : f.children;
   const box = $('#fbody');
-  box.innerHTML = `${f.children.length ? `<h4 class="fsec">Folders</h4><div class="fgrid">${f.children.map((c) => folderTile(c, folderReorder)).join('')}</div>` : ''}
+  box.innerHTML = `${kids.length ? `<h4 class="fsec">Folders</h4><div class="fgrid">${kids.map((c) => folderTile(c, folderReorder && !q)).join('')}</div>` : ''}
     <h4 class="fsec">${folderFilter ? FKINDS.find((k) => k[0] === folderFilter)[1] : 'Saved'}</h4>
     <div class="sitems layout-${f.layout}" id="fposts"></div>`;
   const list = $('#fposts');
-  if (!items.length) list.innerHTML = `<div class="empty">${f.posts.length ? 'Nothing in this format here.' : 'Nothing saved here yet. Use ••• then “Save to a folder” on anything you want to keep.'}</div>`;
+  if (!items.length) list.innerHTML = `<div class="empty">${q ? `Nothing in this folder matches “${esc(q)}”.` : f.posts.length ? 'Nothing in this format here.' : 'Nothing saved here yet. Use ••• then “Save to a folder” on anything you want to keep.'}</div>`;
   else if (f.layout === 'large' && !folderReorder) items.forEach((p) => list.append(postEl(p)));
-  else list.innerHTML = items.map((p) => savedItem(p, f.layout === 'list' ? 'list' : 'grid', folderReorder)).join('');
+  else list.innerHTML = items.map((p) => savedItem(p, f.layout === 'list' ? 'list' : 'grid', folderReorder && !q)).join('');
+  return items.length + kids.length;
   // Reordering swaps neighbours (within the visible format) and saves the whole order.
   $$('.folder [data-mv]', box).forEach((b) => (b.onclick = async () => {
     const i = f.children.findIndex((c) => c.id === +b.closest('[data-fid]').dataset.fid), j = i + +b.dataset.mv;
@@ -609,30 +666,38 @@ async function foldersView(id) {
   if (!id) {
     const all = await api('/folders');
     const top = all.filter((f) => !f.parent_id);
+    let q = '';
+    // Searching here looks through every folder's name, nested ones included.
+    const shown = () => (q ? folderTree(all).filter((f) => matches(q, f.name)) : top);
+    const grid = () => { const list = shown(); $('#fgrid').innerHTML = list.map((f) => folderTile(f, folderReorder && !q)).join('') || `<div class="empty">No folder is called “${esc(q)}”.</div>`; wireMove(); return list.length; };
+    const wireMove = () => $$('[data-mv]').forEach((b) => (b.onclick = async () => {
+      const i = top.findIndex((c) => c.id === +b.closest('[data-fid]').dataset.fid), j = i + +b.dataset.mv;
+      if (j < 0 || j >= top.length) return;
+      [top[i], top[j]] = [top[j], top[i]];
+      grid();
+      await api('/folders/reorder', { body: { ids: top.map((c) => c.id) } });
+    }));
     const draw = () => {
-      view.innerHTML = `<div class="page"><div class="ftools"><button class="btn small primary" id="newf">${icon('newfolder')}New folder</button><button class="btn small ${folderReorder ? 'on' : ''}" id="ford">${icon('reorder')}${folderReorder ? 'Done' : 'Reorder'}</button></div>
-        <div class="fgrid">${top.map((f) => folderTile(f, folderReorder)).join('')}</div></div>`;
+      view.innerHTML = `<div class="page"><div id="sb"></div><div class="ftools"><button class="btn small primary" id="newf">${icon('newfolder')}New folder</button><button class="btn small ${folderReorder ? 'on' : ''}" id="ford">${icon('reorder')}${folderReorder ? 'Done' : 'Reorder'}</button></div>
+        <div class="fgrid" id="fgrid"></div></div>`;
+      $('#sb').replaceWith(searchBar('Search your folders', (v) => { q = v; return grid(); }, q));
+      grid();
       $('#newf').onclick = () => folderSheet(null, { onDone: (n) => (location.hash = '#/folders/' + n.id) });
       $('#ford').onclick = () => { folderReorder = !folderReorder; draw(); };
-      $$('[data-mv]').forEach((b) => (b.onclick = async () => {
-        const i = top.findIndex((c) => c.id === +b.closest('[data-fid]').dataset.fid), j = i + +b.dataset.mv;
-        if (j < 0 || j >= top.length) return;
-        [top[i], top[j]] = [top[j], top[i]];
-        draw();
-        await api('/folders/reorder', { body: { ids: top.map((c) => c.id) } });
-      }));
     };
     draw();
     return;
   }
   const f = await api('/folders/' + id);
-  if (folderView.id !== f.id) { folderFilter = ''; folderView.id = f.id; }
+  if (folderView.id !== f.id) { folderFilter = ''; folderQuery = ''; folderView.id = f.id; }
   setTitle(f.name);
   view.innerHTML = `<div class="page">
     <nav class="crumbs"><a href="#/folders">Folders</a>${f.path.map((p) => `<span>›</span><a href="#/folders/${p.id}">${esc(p.name)}</a>`).join('')}<span>›</span><b>${esc(f.name)}</b></nav>
-    <div class="fhead" style="--fc:${fcolor(f)}">${fbadge(f)}<div class="grow"><h2>${esc(f.name)}</h2><span class="muted">${f.count} saved here${f.children.length ? ` · ${f.children.length} folder${f.children.length > 1 ? 's' : ''}` : ''}</span></div></div>
+    <div class="fhead" style="--fc:${fcolor(f)}">${fbadge(f)}<div class="grow"><h2>${esc(f.name)}</h2><span class="muted">${fmtN(f.count)} saved here${f.children.length ? ` · ${fmtN(f.children.length)} folder${f.children.length > 1 ? 's' : ''}` : ''}</span></div></div>
+    <div id="sb"></div>
     <div class="ftools"><button class="btn small" id="fsub">${icon('newfolder')}New folder inside</button><button class="btn small" id="fedit">${icon('edit')}Customize</button><button class="btn small ${folderReorder ? 'on' : ''}" id="ford">${icon('reorder')}${folderReorder ? 'Done' : 'Reorder'}</button></div>
     <div id="fbody"></div></div>`;
+  $('#sb').replaceWith(searchBar(`Search ${f.name}`, (q) => { folderQuery = q; return drawFolder(f); }, folderQuery));
   folderRail(f);
   drawFolder(f);
   $('#fsub').onclick = () => folderSheet(null, { parentId: f.id, onDone: () => foldersView(id) });
@@ -643,8 +708,62 @@ const folderView = { id: null };
 
 async function subsView() {
   const [subs, posts] = await Promise.all([api('/subscriptions'), api('/feed?scope=subs&limit=60')]);
-  view.innerHTML = `<div class="page"><div class="subs-row">${subs.map((u) => `<a href="#/u/${esc(u.username)}">${avatar(u, 'lg')}<span>${esc(u.display_name.split(' ')[0])}</span></a>`).join('') || '<span class="muted">You haven’t subscribed to anyone yet.</span>'}</div><div id="sposts"></div></div>`;
+  view.innerHTML = `<div class="page"><div id="sb"></div><div class="subs-row" id="srow"></div><div id="sposts"></div></div>`;
+  const row = (list) => ($('#srow').innerHTML = list.map((u) => `<a href="#/u/${esc(u.username)}">${avatar(u, 'lg')}<span>${esc(u.display_name.split(' ')[0])}</span></a>`).join('') || `<span class="muted">${subs.length ? 'No channel by that name.' : 'You haven’t subscribed to anyone yet.'}</span>`);
+  $('#sb').replaceWith(searchBar('Search your subscriptions', async (q) => {
+    if (!q) { row(subs); renderPosts(posts, $('#sposts'), 'New posts from channels you subscribe to show up here, newest first.'); return; }
+    const found = (await api('/search?scope=subs&q=' + encodeURIComponent(q))).posts, chans = subs.filter((u) => matches(q, u.username, u.display_name));
+    row(chans);
+    renderPosts(found, $('#sposts'), `Nothing from your subscriptions matches “${esc(q)}”.`);
+    return found.length + chans.length;
+  }));
+  row(subs);
   renderPosts(posts, $('#sposts'), 'New posts from channels you subscribe to show up here, newest first.');
+}
+
+// Watch history: private, searchable, and gone for good when you clear it.
+async function historyView() {
+  const all = await api('/history');
+  view.innerHTML = `<div class="page"><div id="sb"></div><div class="ftools"><span class="muted grow">Only you can see this. ${fmtN(all.length)} item${all.length === 1 ? '' : 's'}.</span>${all.length ? '<button class="btn small danger" id="hclear">' + icon('trash') + 'Clear history</button>' : ''}</div><div class="sitems layout-list" id="hlist"></div></div>`;
+  const draw = (q) => {
+    const list = q ? all.filter((p) => postMatches(p, q)) : all;
+    $('#hlist').innerHTML = list.map((p) => savedItem(p, 'list').replace('</span></a>', ` · ${ago(p.viewed_at)}</span></a>`)).join('') || `<div class="empty">${q ? `Nothing in your history matches “${esc(q)}”.` : 'Nothing here yet. Anything you watch, read or listen to shows up here.'}</div>`;
+    return list.length;
+  };
+  $('#sb').replaceWith(searchBar('Search your history', draw));
+  draw('');
+  if ($('#hclear')) $('#hclear').onclick = (e) => {
+    const b = e.currentTarget;
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.lastChild.textContent = 'Tap again to erase it all'; return; }
+    api('/history', { method: 'DELETE' }).then(() => { toast('History cleared'); historyView(); });
+  };
+}
+
+// Search everything on Gallium: people and every post that matches, filtered by format.
+async function searchView(start) {
+  let kind = '', res = { users: [], posts: [] }, q = start || '';
+  view.innerHTML = `<div class="page"><div id="sb"></div><div class="tabs" id="stabs"></div><div id="speople"></div><div id="sres"></div></div>`;
+  const draw = () => {
+    const n = (k) => (k ? res.posts.filter((p) => k.split(',').includes(p.kind)).length : res.posts.length);
+    $('#stabs').hidden = !q;
+    $('#stabs').innerHTML = FKINDS.map(([k, l]) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${k ? l : 'All'}<small>${fmtN(n(k))}</small></button>`).join('');
+    $$('#stabs button').forEach((b) => (b.onclick = () => { kind = b.dataset.k; draw(); }));
+    $('#speople').innerHTML = res.users.length ? `<h2>People</h2><div class="people">${res.users.map((u) => `<a href="#/u/${esc(u.username)}">${avatar(u)}${esc(u.display_name)}</a>`).join('')}</div><h2>Posts</h2>` : '';
+    const list = kind ? res.posts.filter((p) => kind.split(',').includes(p.kind)) : res.posts;
+    if (!q) $('#sres').innerHTML = '<div class="empty">Search every post, video, short, song and person on Gallium. Every match shows up, not just a few.</div>';
+    else renderPosts(list, $('#sres'), `Nothing matches “${esc(q)}”. Check the spelling, or try fewer words.`);
+  };
+  const run = async (v) => {
+    q = v;
+    history.replaceState(null, '', '#/search' + (q ? '?q=' + encodeURIComponent(q) : ''));
+    res = q ? await api('/search?q=' + encodeURIComponent(q)) : { users: [], posts: [] };
+    draw();
+    return res.posts.length + res.users.length;
+  };
+  const bar = searchBar('Search Gallium', run, q);
+  $('#sb').replaceWith(bar);
+  $('input', bar).focus();
+  if (q) bar.count(await run(q)); else draw();
 }
 
 async function channelView(username) {
@@ -652,23 +771,35 @@ async function channelView(username) {
   const mine = d.user.id === me.id;
   setTitle(mine ? 'Your channel' : d.user.display_name);
   const TABS = [['all', 'All'], ['video', 'Long-form'], ['short', 'Shorts'], ['posts', 'Posts'], ['track', 'Music'], ['reposts', 'Reposts']];
+  const inTab = (t) => (t === 'reposts' ? d.reposts : d.posts.filter((p) => t === 'all' || (t === 'posts' ? ['text', 'photo'].includes(p.kind) : p.kind === t)));
+  let tab = 'all', q = '';
   view.innerHTML = `<div class="banner"></div><div class="page" style="padding-top:0">
     <div class="channel-head">${avatar(d.user, 'xl')}<h1>${esc(d.user.display_name)}</h1><div class="muted">@${esc(d.user.username)}</div>
-      <div class="stats"><b id="subs-n">${fmtN(d.followers)}</b> subscribers · <b>${d.posts.length}</b> uploads</div>
+      <div class="stats"><span id="subs-n">${count(d.followers, 'subscriber')}</span> · ${count(d.posts.length, 'upload')} · ${count(d.following, 'subscription')}</div>
       ${d.user.bio ? `<div class="bio">${esc(d.user.bio)}</div>` : ''}
       <div class="row">${mine
         ? '<button class="btn" id="edit">Edit channel</button><button class="btn" id="logout">Sign out</button>' + (window.galliumReset ? '<button class="btn danger" id="reset">Reset demo</button>' : '')
         : `<button class="btn ${d.isFollowing ? '' : 'primary'}" id="sub">${d.isFollowing ? 'Subscribed' : 'Subscribe'}</button><a class="btn" href="#/messages/${d.user.id}">${icon('chat')}Message</a>`}</div></div>
-    <div class="tabs">${TABS.map(([k, l], i) => `<button data-t="${k}" class="${i ? '' : 'on'}">${l}</button>`).join('')}</div>
-    <div id="cposts"></div></div>`;
-  const show = (t) => {
-    const list = t === 'reposts' ? d.reposts : d.posts.filter((p) => t === 'all' || (t === 'posts' ? ['text', 'photo'].includes(p.kind) : p.kind === t));
+    <div class="tabs">${TABS.map(([k, l], i) => `<button data-t="${k}" class="${i ? '' : 'on'}">${l}<small>${fmtN(inTab(k).length)}</small></button>`).join('')}</div>
+    <div id="sb"></div><div id="cposts"></div></div>`;
+  const label = () => TABS.find((x) => x[0] === tab)[1];
+  const show = () => {
+    const list = inTab(tab).filter((p) => !q || postMatches(p, q));
     $('#cposts').innerHTML = '';
-    if (!list.length) $('#cposts').innerHTML = '<div class="empty">Nothing here yet.</div>';
-    list.forEach((p) => $('#cposts').append(postEl(p, t === 'reposts' ? { reposter: d.user.username } : {})));
+    if (!list.length) $('#cposts').innerHTML = `<div class="empty">${q ? `Nothing in ${tab === 'all' ? 'this channel' : label()} matches “${esc(q)}”.` : 'Nothing here yet.'}</div>`;
+    list.forEach((p) => $('#cposts').append(tab === 'reposts' ? repostEl(p, d.user.username) : postEl(p)));
+    return list.length;
   };
-  $$('.tabs button').forEach((b) => (b.onclick = () => { $$('.tabs button').forEach((x) => x.classList.toggle('on', x === b)); show(b.dataset.t); }));
-  show('all');
+  const bar = searchBar(`Search ${d.user.display_name}'s channel`, (v) => { q = v; return show(); });
+  $('#sb').replaceWith(bar);
+  // The search bar searches whichever section is open.
+  $$('.tabs button').forEach((b) => (b.onclick = () => {
+    $$('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
+    tab = b.dataset.t;
+    $('input', bar).placeholder = tab === 'all' ? `Search ${d.user.display_name}'s channel` : `Search ${label()} on this channel`;
+    bar.count(q ? show() : (show(), null));
+  }));
+  show();
   if (mine) {
     $('#logout').onclick = async () => { await api('/logout', { method: 'POST' }); me = null; location.hash = '#/'; renderAuth(); };
     if ($('#reset')) $('#reset').onclick = () => { window.galliumReset(); toast('Demo reset'); location.hash = '#/'; boot(); };
@@ -678,7 +809,7 @@ async function channelView(username) {
       $('#pf', sheet).onsubmit = async (e) => { e.preventDefault(); await api('/me', { method: 'PATCH', body: Object.fromEntries(new FormData(e.target)) }); me = await api('/me'); closeSheet(); renderNav(); channelView(username); };
     };
   } else {
-    $('#sub').onclick = async (e) => { const r = await api(`/users/${d.user.id}/follow`, { method: 'POST' }); e.target.textContent = r.following ? 'Subscribed' : 'Subscribe'; e.target.classList.toggle('primary', !r.following); $('#subs-n').textContent = fmtN(r.followers); };
+    $('#sub').onclick = async (e) => { const r = await api(`/users/${d.user.id}/follow`, { method: 'POST' }); e.target.textContent = r.following ? 'Subscribed' : 'Subscribe'; e.target.classList.toggle('primary', !r.following); $('#subs-n').innerHTML = count(r.followers, 'subscriber'); };
   }
 }
 
@@ -686,15 +817,25 @@ async function messagesView(otherId) {
   const thread = otherId ? await api('/messages/' + otherId) : null; // loads first so it is marked read
   const convos = await api('/conversations');
   view.innerHTML = `<div class="dm-layout ${otherId ? 'in-chat' : ''}">
-    <div class="dm-list"><div class="head"><input id="dm-q" placeholder="Search people to message" autocomplete="off" aria-label="Search people"><div id="dmsearch"></div></div>
-      ${convos.map((c) => `<a class="dm-item ${String(c.user.id) === otherId ? 'active' : ''}" href="#/messages/${c.user.id}">${avatar(c.user)}<div class="who"><b>${esc(c.user.display_name)}</b><div class="preview">${c.last.sender_id === me.id ? 'You: ' : ''}${esc(c.last.body)}</div></div>${c.unread ? `<span class="unread">${c.unread}</span>` : ''}</a>`).join('') || '<div class="muted" style="padding:16px">No conversations yet.</div>'}
+    <div class="dm-list"><div class="head"><input id="dm-q" type="search" placeholder="Search chats and people" autocomplete="off" aria-label="Search chats and people"><div id="dmsearch"></div></div>
+      <div id="convos"></div>
     </div>
     <div class="chat" id="chat">${otherId ? '' : '<div class="chat-empty">Pick a conversation, or search for someone to message.</div>'}</div></div>`;
+  const drawConvos = (list, query) => ($('#convos').innerHTML = list.map((c) => `<a class="dm-item ${String(c.user.id) === otherId ? 'active' : ''}" href="#/messages/${c.user.id}">${avatar(c.user)}<div class="who"><b>${esc(c.user.display_name)}</b><div class="preview">${c.last.sender_id === me.id ? 'You: ' : ''}${esc(c.last.body)}</div></div>${c.unread ? `<span class="unread">${fmtN(c.unread)}</span>` : ''}</a>`).join('')
+    || `<div class="muted" style="padding:16px">${query ? `No chat mentions “${esc(query)}”.` : 'No conversations yet.'}</div>`);
+  drawConvos(convos);
+  // Searches the names and every message in your chats, plus people you could start a chat with.
   const q = $('#dm-q');
+  let seq = 0;
   q.oninput = async () => {
-    if (!q.value.trim()) return ($('#dmsearch').innerHTML = '');
-    const r = await api('/search?q=' + encodeURIComponent(q.value.trim()));
-    $('#dmsearch').innerHTML = r.users.filter((u) => u.id !== me.id).map((u) => `<a class="dm-item" href="#/messages/${u.id}">${avatar(u)}<div class="who"><b>${esc(u.display_name)}</b><div class="preview">@${esc(u.username)}</div></div></a>`).join('');
+    const v = q.value.trim(), n = ++seq;
+    if (!v) { $('#dmsearch').innerHTML = ''; return drawConvos(convos); }
+    const [found, r] = await Promise.all([api('/conversations?q=' + encodeURIComponent(v)), api('/search?q=' + encodeURIComponent(v))]);
+    if (n !== seq) return;
+    drawConvos(found, v);
+    const talked = new Set(found.map((c) => c.user.id));
+    const people = r.users.filter((u) => u.id !== me.id && !talked.has(u.id));
+    $('#dmsearch').innerHTML = people.length ? `<div class="muted dm-label">Start a chat</div>` + people.map((u) => `<a class="dm-item" href="#/messages/${u.id}">${avatar(u)}<div class="who"><b>${esc(u.display_name)}</b><div class="preview">@${esc(u.username)}</div></div></a>`).join('') : '';
   };
   if (!otherId) return;
   const { user, messages } = thread;
@@ -834,16 +975,24 @@ async function controlsView() {
 }
 
 async function roadmapView() {
-  const items = await api('/roadmap');
+  const all = await api('/roadmap');
+  let items = all;
   view.innerHTML = `<div class="page">
     <div class="explainer">Gallium gets built in the order you vote for. Suggest a feature or report something broken, and upvote what matters to you. The top of this list is what gets worked on next.</div>
     <form id="rmform" style="margin:16px 0 22px;display:grid;gap:8px">
       <div style="display:flex;gap:8px"><select name="kind" style="width:auto" aria-label="Type"><option value="idea">Idea</option><option value="fix">Fix</option></select><input name="title" placeholder="What should change?" maxlength="140" required aria-label="Title"></div>
       <textarea name="body" rows="2" placeholder="Details (optional)" aria-label="Details"></textarea>
       <div style="display:flex;justify-content:flex-end"><button class="btn primary">Submit</button></div></form>
-    ${items.map((i) => `<div class="rm-item"><button class="vote ${i.voted ? 'on' : ''}" data-id="${i.id}" aria-label="Vote">${icon('up')}<b>${i.votes}</b></button><div style="min-width:0"><span class="pill ${i.kind === 'fix' ? 'block' : 'boost'}">${i.kind}</span> <b>${esc(i.title)}</b><div class="muted" style="margin-top:4px;font-size:14px">${esc(i.body || '')}</div><div class="muted" style="font-size:12px;margin-top:6px">@${esc(i.username)} · ${ago(i.created_at)}</div></div></div>`).join('')}</div>`;
+    <div id="sb"></div><div id="rmlist"></div></div>`;
+  const draw = (q) => {
+    items = q ? all.filter((i) => matches(q, i.title, i.body, i.kind, i.username)) : all;
+    $('#rmlist').innerHTML = items.map((i) => `<div class="rm-item"><button class="vote ${i.voted ? 'on' : ''}" data-id="${i.id}" aria-label="Vote">${icon('up')}<b>${fmtN(i.votes)}</b></button><div style="min-width:0"><span class="pill ${i.kind === 'fix' ? 'block' : 'boost'}">${i.kind}</span> <b>${esc(i.title)}</b><div class="muted" style="margin-top:4px;font-size:14px">${esc(i.body || '')}</div><div class="muted" style="font-size:12px;margin-top:6px">@${esc(i.username)} · ${ago(i.created_at)}</div></div></div>`).join('') || `<div class="empty">${q ? `No idea or fix matches “${esc(q)}”. Suggest it above.` : 'Nothing suggested yet.'}</div>`;
+    $$('.vote').forEach((b) => (b.onclick = async () => { await api(`/roadmap/${b.dataset.id}/vote`, { method: 'POST' }); roadmapView(); }));
+    return items.length;
+  };
+  $('#sb').replaceWith(searchBar('Search ideas and fixes', draw));
   $('#rmform').onsubmit = async (e) => { e.preventDefault(); await api('/roadmap', { body: Object.fromEntries(new FormData(e.target)) }); roadmapView(); };
-  $$('.vote').forEach((b) => (b.onclick = async () => { await api(`/roadmap/${b.dataset.id}/vote`, { method: 'POST' }); roadmapView(); }));
+  draw('');
 }
 
 // ---------- music player (keeps playing across pages) ----------
@@ -854,6 +1003,7 @@ const Player = {
     const t = this.queue[this.i];
     if (!t) return;
     this.audio.src = media(t.media);
+    seen(t);
     this.audio.play().catch(() => {});
     $('#player').hidden = false;
     document.body.classList.add('has-player');
@@ -882,7 +1032,7 @@ $('#player-close').onclick = () => { Player.audio.pause(); $('#player').hidden =
 
 // ---------- side rails: always visible on wide screens, swipe-in drawers on phones ----------
 const NAV = [['home', '#/', 'home', 'Home'], ['long', '#/long', 'book', 'Long-form'], ['shorts', '#/shorts', 'shorts', 'Short-form'], ['music', '#/music', 'music', 'Music'],
-  ['create', '#/create', 'plus', 'Create'], ['folders', '#/folders', 'folder', 'Folders'], ['subs', '#/subs', 'subs', 'Subscriptions']];
+  ['create', '#/create', 'plus', 'Create'], ['folders', '#/folders', 'folder', 'Folders'], ['subs', '#/subs', 'subs', 'Subscriptions'], ['history', '#/history', 'clock', 'History']];
 function renderNav() {
   $('#lnav').innerHTML = `<a class="brand" href="#/" aria-label="Gallium home"><span class="tile"><small>31</small>Ga</span></a>
     ${NAV.map(([k, href, ic, l]) => `<a class="nav-i ${k === 'create' ? 'create' : ''}" data-nav="${k}" href="${href}">${icon(ic)}<span>${l}</span></a>`).join('')}
@@ -902,6 +1052,7 @@ $('#open-l').onclick = () => openDrawer('l');
 $('#open-r').onclick = () => openDrawer('r');
 $('#open-r').innerHTML = icon('filter');
 $('#msg-btn').insertAdjacentHTML('afterbegin', icon('chat'));
+$('#search-btn').innerHTML = icon('search');
 // Swipe from a screen edge toward the middle to pull a rail out; swipe it back to close.
 (() => {
   let sx = 0, sy = 0, mode = null;
@@ -976,7 +1127,7 @@ async function refreshUnread() {
 }
 
 // ---------- router ----------
-const TITLES = { home: 'Home', long: 'Long-form', shorts: 'Short-form', music: 'Music', create: 'Create', folders: 'Folders', subs: 'Subscriptions', messages: 'Messages', controls: 'Feed controls', roadmap: 'Roadmap', p: 'Post' };
+const TITLES = { home: 'Home', long: 'Long-form', shorts: 'Short-form', music: 'Music', create: 'Create', folders: 'Folders', subs: 'Subscriptions', history: 'History', search: 'Search', messages: 'Messages', controls: 'Feed controls', roadmap: 'Roadmap', p: 'Post' };
 const setTitle = (t) => { $('#page-title').textContent = t; document.title = t === 'Home' ? 'Gallium' : `${t} · Gallium`; };
 const route = { section: 'home' };
 let cleanup = null;
@@ -1010,6 +1161,8 @@ async function onRoute() {
     else if (section === 'create') createView();
     else if (section === 'folders') await foldersView(parts[1]);
     else if (section === 'subs') await subsView();
+    else if (section === 'history') await historyView();
+    else if (section === 'search') await searchView(new URLSearchParams(query || '').get('q'));
     else if (section === 'me') await channelView(me.username);
     else if (section === 'u') await channelView(parts[1]);
     else if (section === 'messages') await messagesView(parts[1]);

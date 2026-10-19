@@ -39,7 +39,7 @@
 
   // ---------- seed ----------
   function seed() {
-    S = { seq: {}, users: [], posts: [], likes: [], dislikes: [], reposts: [], folders: [], saves: [], reports: [], comments: [], follows: [], prefs: [], hidden: [], messages: [], roadmap: [], votes: [], session: null };
+    S = { seq: {}, users: [], posts: [], likes: [], dislikes: [], reposts: [], folders: [], saves: [], reports: [], comments: [], follows: [], prefs: [], hidden: [], messages: [], roadmap: [], votes: [], history: [], session: null };
     const users = [
       ['demo', 'You (Demo)', 'Trying out Gallium.', '#f5b83d'],
       ['maya', 'Maya Torres', 'Food, travel, too much coffee.', '#ec4899'],
@@ -130,6 +130,7 @@
   }
   S = load();
   if (!S || !S.users) seed();
+  S.history ||= []; // saved before history existed
 
   // ---------- helpers ----------
   class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -161,11 +162,15 @@
     return p;
   }
   // Same ranking as server.js rank(): Never rules filter first, then freshness, follows, popularity and boosts.
+  const isBlocked = (post, prefs) => {
+    const tags = post.tags ? post.tags.split(',') : [];
+    return prefs.hidden.has(post.id) || prefs.block.kind.has(post.kind) || prefs.block.creator.has(String(post.user_id)) || tags.some((t) => prefs.block.tag.has(t));
+  };
   function rank(posts, prefs, viewerId) {
     const now = Date.now(), out = [];
     for (const post of posts) {
       const tags = post.tags ? post.tags.split(',') : [];
-      if (prefs.hidden.has(post.id) || prefs.block.kind.has(post.kind) || prefs.block.creator.has(String(post.user_id)) || tags.some((t) => prefs.block.tag.has(t))) continue;
+      if (isBlocked(post, prefs)) continue;
       const reasons = [], asked = [];
       const ageHours = (now - new Date(post.created_at + 'Z').getTime()) / 36e5;
       let score = 10 / Math.pow(ageHours + 2, 0.5);
@@ -305,6 +310,15 @@
     const pid = +params.id, people = (t) => S[t].filter((x) => x.post_id === pid).map((x) => publicUser(userById(x.user_id)));
     return { likers: people('likes'), reposters: people('reposts'), likes: count('likes', pid), dislikes: count('dislikes', pid), reposts: count('reposts', pid), comments: count('comments', pid), saves: S.saves.filter((s) => s.post_id === pid).length };
   });
+  on('POST', '/posts/:id/view', ({ me, params }) => {
+    const pid = +params.id; if (!postById(pid)) fail(404, 'Not found');
+    S.history = S.history.filter((h) => !(h.user_id === me.id && h.post_id === pid));
+    S.history.push({ user_id: me.id, post_id: pid, viewed_at: stamp() });
+    return { ok: true };
+  });
+  on('GET', '/history', ({ me }) => S.history.filter((h) => h.user_id === me.id).reverse()
+    .map((h) => postById(h.post_id) && { ...hydrate(postById(h.post_id), me.id), viewed_at: h.viewed_at }).filter(Boolean));
+  on('DELETE', '/history', ({ me }) => { S.history = S.history.filter((h) => h.user_id !== me.id); return { ok: true }; });
   // Folders nest without limit; mirrors the folder routes in server.js.
   const FOLDER_STYLE = { layout: ['grid', 'list', 'large'], shape: ['rounded', 'square', 'circle'], icon_style: ['vector', 'native', 'image'] };
   const isHex = (c) => /^#[0-9a-f]{6}$/i.test(c);
@@ -411,15 +425,32 @@
     if (had) S.follows = S.follows.filter((f) => !(f.follower_id === me.id && f.followee_id === id)); else S.follows.push({ follower_id: me.id, followee_id: id });
     return { following: !had, followers: S.follows.filter((f) => f.followee_id === id).length };
   });
-  on('GET', '/search', ({ query }) => {
-    const q = String(query.get('q') || '').toLowerCase();
-    return { users: S.users.filter((u) => u.username.includes(q) || u.display_name.toLowerCase().includes(q)).slice(0, 10).map(publicUser) };
+  // Same as server.js: every match, each typed word must appear in the title, text, tags or creator name.
+  const searchWords = (q) => String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const matchesWords = (p, u, words) => { const hay = [p.title, p.body, p.tags, u?.username, u?.display_name].join(' ').toLowerCase(); return words.every((w) => hay.includes(w)); };
+  on('GET', '/search', ({ me, query }) => {
+    const words = searchWords(query.get('q'));
+    if (!words.length) return { users: [], posts: [] };
+    const kinds = String(query.get('kinds') || '').split(',').filter((k) => KINDS.includes(k));
+    const user = Number(query.get('user')) || null, prefs = loadPrefs(me.id);
+    const posts = S.posts.filter((p) => (!kinds.length || kinds.includes(p.kind)) && (!user || p.user_id === user)
+      && (query.get('scope') !== 'subs' || prefs.following.has(String(p.user_id)))
+      && !isBlocked(p, prefs) && matchesWords(p, userById(p.user_id), words)).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return {
+      users: S.users.filter((u) => words.every((w) => (u.username + ' ' + u.display_name).toLowerCase().includes(w))).map(publicUser),
+      posts: posts.map((p) => hydrate(p, me.id)),
+    };
   });
 
-  on('GET', '/conversations', ({ me }) => {
-    const latest = new Map();
-    for (const m of S.messages) if (m.sender_id === me.id || m.recipient_id === me.id) latest.set(m.sender_id === me.id ? m.recipient_id : m.sender_id, m);
-    return [...latest.entries()].sort((a, b) => b[1].id - a[1].id).map(([other, last]) => ({
+  on('GET', '/conversations', ({ me, query }) => {
+    const latest = new Map(), text = new Map();
+    for (const m of S.messages) if (m.sender_id === me.id || m.recipient_id === me.id) {
+      const other = m.sender_id === me.id ? m.recipient_id : m.sender_id;
+      latest.set(other, m); text.set(other, (text.get(other) || '') + ' ' + m.body);
+    }
+    const words = searchWords(query.get('q'));
+    const keep = ([other]) => { const u = userById(other); const hay = (u.username + ' ' + u.display_name + text.get(other)).toLowerCase(); return words.every((w) => hay.includes(w)); };
+    return [...latest.entries()].filter(keep).sort((a, b) => b[1].id - a[1].id).map(([other, last]) => ({
       user: publicUser(userById(other)), last,
       unread: S.messages.filter((m) => m.sender_id === other && m.recipient_id === me.id && !m.read_at).length,
     }));

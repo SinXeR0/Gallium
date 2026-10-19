@@ -39,6 +39,7 @@ function openDb(file) {
     CREATE INDEX IF NOT EXISTS folders_user ON folders (user_id);
     CREATE TABLE IF NOT EXISTS saves (folder_id INTEGER REFERENCES folders(id) ON DELETE CASCADE, post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (folder_id, post_id));
     CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, reason TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS history (user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE, viewed_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id));
     CREATE TABLE IF NOT EXISTS roadmap_votes (item_id INTEGER REFERENCES roadmap_items(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, PRIMARY KEY (item_id, user_id));
   `);
   // Columns added after the first release; older databases get them here.

@@ -138,15 +138,17 @@ function loadPrefs(userId) {
   return p;
 }
 
+// Never rules are absolute: they apply to the feed and to search alike.
+function isBlocked(post, prefs) {
+  const tags = post.tags ? post.tags.split(',') : [];
+  return prefs.hidden.has(post.id) || prefs.block.kind.has(post.kind) || prefs.block.creator.has(String(post.user_id)) || tags.some((t) => prefs.block.tag.has(t));
+}
 function rank(posts, prefs, viewerId) {
   const now = Date.now();
   const out = [];
   for (const post of posts) {
     const tags = post.tags ? post.tags.split(',') : [];
-    if (prefs.hidden.has(post.id)) continue;
-    if (prefs.block.kind.has(post.kind)) continue;
-    if (prefs.block.creator.has(String(post.user_id))) continue;
-    if (tags.some((t) => prefs.block.tag.has(t))) continue;
+    if (isBlocked(post, prefs)) continue;
 
     const reasons = [];
     const asked = [];
@@ -287,6 +289,19 @@ app.post('/api/posts/:id/report', auth, (req, res) => {
   res.json({ ok: true });
 });
 // Who interacted: likes and reposts are public, dislikes and saves are shown as counts only.
+// Watch history: private to you, searchable, and erasable in one tap.
+app.post('/api/posts/:id/view', auth, (req, res) => {
+  if (!db.prepare('SELECT 1 FROM posts WHERE id = ?').get(req.params.id)) return res.status(404).json({ error: 'Not found' });
+  db.prepare('INSERT INTO history (user_id, post_id) VALUES (?, ?) ON CONFLICT (user_id, post_id) DO UPDATE SET viewed_at = CURRENT_TIMESTAMP').run(req.user.id, req.params.id);
+  res.json({ ok: true });
+});
+app.get('/api/history', auth, (req, res) => {
+  res.json(db.prepare('SELECT p.*, h.viewed_at FROM history h JOIN posts p ON p.id = h.post_id WHERE h.user_id = ? ORDER BY h.viewed_at DESC').all(req.user.id).map((p) => hydrate(p, req.user.id)));
+});
+app.delete('/api/history', auth, (req, res) => {
+  db.prepare('DELETE FROM history WHERE user_id = ?').run(req.user.id);
+  res.json({ ok: true });
+});
 app.get('/api/posts/:id/interactions', auth, (req, res) => {
   const pid = Number(req.params.id);
   const people = (table) => db.prepare(`SELECT u.* FROM ${table} t JOIN users u ON u.id = t.user_id WHERE t.post_id = ?`).all(pid).map(publicUser);
@@ -447,10 +462,27 @@ app.patch('/api/me', auth, (req, res) => {
   db.prepare('UPDATE users SET display_name = COALESCE(?, display_name), bio = COALESCE(?, bio) WHERE id = ?').run(display_name ?? null, bio ?? null, req.user.id);
   res.json({ ok: true });
 });
+// Search returns every match, not a sample: each word you type has to appear somewhere in the
+// title, text, tags or creator name. Optional filters: kinds, one creator (user), or scope=subs.
+const searchWords = (q) => String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+function matchesWords(post, author, words) {
+  const hay = [post.title, post.body, post.tags, author?.username, author?.display_name].join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
 app.get('/api/search', auth, (req, res) => {
-  const q = '%' + String(req.query.q || '').toLowerCase() + '%';
+  const words = searchWords(req.query.q);
+  if (!words.length) return res.json({ users: [], posts: [] });
+  const users = db.prepare('SELECT * FROM users').all();
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const kinds = String(req.query.kinds || '').split(',').filter((k) => KINDS.includes(k));
+  const prefs = loadPrefs(req.user.id);
+  const posts = db.prepare('SELECT * FROM posts ORDER BY created_at DESC').all().filter((p) =>
+    (!kinds.length || kinds.includes(p.kind)) && (!req.query.user || p.user_id === Number(req.query.user))
+    && (req.query.scope !== 'subs' || prefs.following.has(String(p.user_id)))
+    && !isBlocked(p, prefs) && matchesWords(p, byId.get(p.user_id), words));
   res.json({
-    users: db.prepare('SELECT * FROM users WHERE username LIKE ? OR lower(display_name) LIKE ? LIMIT 10').all(q, q).map(publicUser),
+    users: users.filter((u) => words.every((w) => (u.username + ' ' + (u.display_name || '')).toLowerCase().includes(w))).map(publicUser),
+    posts: posts.map((p) => hydrate(p, req.user.id)),
   });
 });
 
@@ -473,7 +505,16 @@ app.get('/api/conversations', auth, (req, res) => {
   const rows = db.prepare(`
     SELECT CASE WHEN sender_id = ? THEN recipient_id ELSE sender_id END AS other_id, MAX(id) AS last_id
     FROM messages WHERE sender_id = ? OR recipient_id = ? GROUP BY other_id ORDER BY last_id DESC`).all(me, me, me);
-  res.json(rows.map((r) => {
+  // ?q= keeps conversations where the person's name or any message in the chat contains every word.
+  const words = searchWords(req.query.q);
+  const keep = (r) => {
+    if (!words.length) return true;
+    const u = db.prepare('SELECT * FROM users WHERE id = ?').get(r.other_id);
+    const text = db.prepare('SELECT body FROM messages WHERE (sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)').all(me, r.other_id, r.other_id, me).map((m) => m.body);
+    const hay = [u.username, u.display_name, ...text].join(' ').toLowerCase();
+    return words.every((w) => hay.includes(w));
+  };
+  res.json(rows.filter(keep).map((r) => {
     const last = db.prepare('SELECT * FROM messages WHERE id = ?').get(r.last_id);
     const unread = db.prepare('SELECT COUNT(*) n FROM messages WHERE sender_id = ? AND recipient_id = ? AND read_at IS NULL').get(r.other_id, me).n;
     return { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(r.other_id)), last, unread };
