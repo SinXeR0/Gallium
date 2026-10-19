@@ -3,6 +3,10 @@
 One social app for everything: posts and photos, shorts, long videos, music and messaging.
 No ads, no paywalls, and a feed the user fully controls.
 
+## Free preview site
+
+`docs/` is a browser-only copy of Gallium (data stays in each visitor's browser) that GitHub Pages serves for free at https://sinxer0.github.io/gallium/. Turn it on under Settings → Pages → Deploy from a branch → `main` → `/docs`.
+
 ## Run it
 
 Easiest: install [Node.js](https://nodejs.org) (22.5 or newer), then double-click **Start Gallium (Mac).command** or **Start Gallium (Windows).bat**. The first start loads the demo content and opens your browser. See `HOW TO START.txt`.
