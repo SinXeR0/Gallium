@@ -36,10 +36,20 @@ function openDb(file) {
     CREATE TABLE IF NOT EXISTS dislikes (post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, PRIMARY KEY (post_id, user_id));
     CREATE TABLE IF NOT EXISTS reposts (post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (post_id, user_id));
     CREATE TABLE IF NOT EXISTS folders (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS folders_user ON folders (user_id);
     CREATE TABLE IF NOT EXISTS saves (folder_id INTEGER REFERENCES folders(id) ON DELETE CASCADE, post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (folder_id, post_id));
     CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, reason TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS roadmap_votes (item_id INTEGER REFERENCES roadmap_items(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, PRIMARY KEY (item_id, user_id));
   `);
+  // Columns added after the first release; older databases get them here.
+  const addColumn = (table, def) => { try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${def}`); } catch { /* already there */ } };
+  addColumn('folders', 'parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE');
+  addColumn('folders', 'position INTEGER DEFAULT 0');
+  addColumn('folders', "color TEXT DEFAULT 'tq'");
+  addColumn('folders', "icon TEXT DEFAULT 'folder'");
+  addColumn('folders', "layout TEXT DEFAULT 'grid'");
+  addColumn('folders', "shape TEXT DEFAULT 'rounded'");
+  addColumn('saves', 'position INTEGER DEFAULT 0');
   return db;
 }
 

@@ -41,6 +41,24 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/>',
+  // folder icons
+  star: '<path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/>',
+  heart: '<path d="M12 20s-7.5-4.6-9-9.3C2 7.2 4.2 4.5 7.2 4.5c2 0 3.6 1.1 4.8 2.8 1.2-1.7 2.8-2.8 4.8-2.8 3 0 5.2 2.7 4.2 6.2C19.5 15.4 12 20 12 20z"/>',
+  film: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+  chef: '<path d="M7 14.5A4 4 0 0 1 6.5 6.6 5.5 5.5 0 0 1 17.5 6.6 4 4 0 0 1 17 14.5V20H7z"/><path d="M7 17h10"/>',
+  game: '<rect x="2.5" y="7" width="19" height="11" rx="5.5"/><path d="M7 10.5v4M5 12.5h4"/><circle cx="15.5" cy="11.5" r="1" fill="currentColor"/><circle cx="17.5" cy="14" r="1" fill="currentColor"/>',
+  bolt: '<path d="M13 2 4.5 13.5H12L11 22l8.5-11.5H12z"/>',
+  pin: '<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+  bookmark: '<path d="M6 3h12v18l-6-4.2L6 21z"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  list: '<rect x="3" y="5" width="5" height="4" rx="1"/><rect x="3" y="15" width="5" height="4" rx="1"/><path d="M11 7h10M11 17h10"/>',
+  large: '<rect x="3" y="3" width="18" height="13" rx="2"/><path d="M3 20h18"/>',
+  arrowup: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  arrowdown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+  reorder: '<path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+  newfolder: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M12 11v6M9 14h6"/>',
 };
 const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
 const KIND = { text: ['Post', 'text'], photo: ['Photo', 'photo'], short: ['Short', 'shorts'], video: ['Long-form', 'book'], track: ['Track', 'music'] };
@@ -128,23 +146,43 @@ function moreMenu(p, onGone) {
   };
   $$('.opt', sheet).forEach((b) => (b.onclick = acts[b.dataset.a]));
 }
+// Folders arrive as a flat list; this turns them into rows in tree order with their depth.
+function folderTree(list, skip) {
+  const kids = {};
+  list.forEach((f) => (kids[f.parent_id ?? 0] ||= []).push(f));
+  const out = [];
+  const walk = (pid, depth) => (kids[pid] || []).forEach((f) => { if (f.id === skip) return; out.push({ ...f, depth }); walk(f.id, depth + 1); });
+  walk(0, 0);
+  return out;
+}
+const FCOLORS = { tq: '#7cfcfd', pk: '#fd9efc', violet: '#b9a2ff', blue: '#82b8ff', green: '#8ff0b0', yellow: '#ffe27a', red: '#ff8a9a', white: '#ecfbfb' };
+const FICONS = ['folder', 'bookmark', 'star', 'heart', 'music', 'film', 'book', 'chef', 'game', 'bolt', 'pin', 'moon'];
+const fcolor = (f) => FCOLORS[f.color] || FCOLORS.tq;
+const fbadge = (f) => `<span class="fbadge" style="--fc:${fcolor(f)}">${icon(f.icon || 'folder')}</span>`;
 async function saveSheet(p) {
   const folders = await api('/folders?post=' + p.id);
-  const sheet = openSheet(`<h3>Save to a folder</h3><p class="why">Tap a folder to add or remove this.</p>
-    ${folders.map((f) => `<button class="opt ${f.contains ? 'on' : ''}" data-id="${f.id}">${icon('folder')}<span class="grow">${esc(f.name)}<small>${f.count} saved</small></span>${f.contains ? icon('check', 'check') : ''}</button>`).join('')}
-    <form id="nf" style="display:flex;gap:8px;margin-top:10px"><input id="nf-name" name="name" placeholder="New folder name" maxlength="60" autocomplete="off"><button class="btn primary">Create</button></form>`);
-  $$('.opt', sheet).forEach((b) => (b.onclick = async () => {
+  const rows = folderTree(folders);
+  const sheet = openSheet(`<h3>Save to a folder</h3><p class="why">Tap a folder to add or remove this. Tap + to make a folder inside one.</p>
+    <div class="ftree">${rows.map((f) => `<div class="frow ${f.contains ? 'on' : ''}" style="--depth:${f.depth}">
+      <button class="opt" data-id="${f.id}">${fbadge(f)}<span class="grow">${esc(f.name)}<small>${f.count} saved${f.folders ? ` · ${f.folders} folder${f.folders > 1 ? 's' : ''}` : ''}</small></span>${f.contains ? icon('check', 'check') : ''}</button>
+      <button class="icon-btn" data-sub="${f.id}" aria-label="New folder inside ${esc(f.name)}">${icon('plus')}</button></div>`).join('')}</div>
+    <form id="nf" class="nf-row"><input id="nf-name" name="name" placeholder="New folder name" maxlength="60" autocomplete="off">
+      <select name="parent" aria-label="Put it inside"><option value="">Top level</option>${rows.map((f) => `<option value="${f.id}">${'– '.repeat(f.depth)}${esc(f.name)}</option>`).join('')}</select>
+      <button class="btn primary">Create and save</button></form>`);
+  $$('[data-id]', sheet).forEach((b) => (b.onclick = async () => {
     const r = await api(`/folders/${b.dataset.id}/toggle`, { body: { post_id: p.id } });
     p.saved = r.saved || folders.some((f) => f.contains && String(f.id) !== b.dataset.id);
     toast(r.saved ? `Saved to ${r.folder}` : `Removed from ${r.folder}`);
     saveSheet(p);
   }));
+  $$('[data-sub]', sheet).forEach((b) => (b.onclick = () => { $('#nf select', sheet).value = b.dataset.sub; $('#nf-name', sheet).focus(); }));
   $('#nf', sheet).onsubmit = async (e) => {
     e.preventDefault();
     const name = e.target.name.value.trim();
-    if (!name) return;
-    const f = await api('/folders', { body: { name } });
+    if (!name) return $('#nf-name', sheet).focus();
+    const f = await api('/folders', { body: { name, parent_id: e.target.parent.value || null } });
     await api(`/folders/${f.id}/toggle`, { body: { post_id: p.id } });
+    p.saved = true;
     toast(`Saved to ${f.name}`);
     saveSheet(p);
   };
@@ -347,28 +385,145 @@ async function musicView() {
   Player.highlight();
 }
 
-async function foldersView(id) {
-  if (id) {
-    const f = await api('/folders/' + id);
-    setTitle(f.name);
-    view.innerHTML = `<div class="page"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><a class="btn small ghost" href="#/folders">${icon('back')}Folders</a><span style="flex:1"></span><button class="btn small danger" id="delf">${icon('trash')}Delete folder</button></div><div id="fposts"></div></div>`;
-    renderPosts(f.posts, $('#fposts'), 'This folder is empty. Use ••• then “Save to a folder” on anything you want to keep.');
-    $('#delf').onclick = (e) => {
-      if (e.target.closest('button').dataset.armed) { api('/folders/' + id, { method: 'DELETE' }).then(() => { toast('Folder deleted'); location.hash = '#/folders'; }); return; }
-      const b = e.target.closest('button'); b.dataset.armed = '1'; b.lastChild.textContent = 'Tap again to delete';
-    };
-    return;
-  }
-  const folders = await api('/folders');
-  view.innerHTML = `<div class="page"><div class="fgrid">
-    ${folders.map((f) => `<a class="folder" href="#/folders/${f.id}"><div class="cover">${f.cover ? `<img src="${media(f.cover)}" alt="">` : icon('folder')}<span class="n">${f.count}</span></div><b>${esc(f.name)}</b></a>`).join('')}
-    <button class="folder new" id="newf" style="text-align:left"><div class="cover">${icon('plus')}</div><b>New folder</b></button></div></div>`;
-  $('#newf').onclick = () => {
-    const sheet = openSheet(`<h3>New folder</h3><form id="nf" style="display:flex;gap:8px;margin-top:10px"><input id="nf-name" name="name" placeholder="Folder name" maxlength="60" autocomplete="off"><button class="btn primary">Create</button></form>`);
-    $('#nf-name', sheet).focus();
-    $('#nf', sheet).onsubmit = async (e) => { e.preventDefault(); const name = e.target.name.value.trim(); if (!name) return; await api('/folders', { body: { name } }); closeSheet(); foldersView(); };
+// Folders are their own space: folders inside folders, each with its own color, icon, tile shape,
+// layout and order, and a format filter on the right like the home feed.
+const FKINDS = [['', 'Everything', 'sparkle'], ['text,photo', 'Posts', 'text'], ['short', 'Shorts', 'shorts'], ['video', 'Long-form', 'book'], ['track', 'Music', 'music']];
+let folderFilter = '';
+function folderTile(f, reorder) {
+  const bits = [f.total ? `${f.total} saved` : 'Empty', f.folders ? `${f.folders} folder${f.folders > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+  return `<div class="folder shape-${f.shape || 'rounded'}" style="--fc:${fcolor(f)}" data-fid="${f.id}">
+    <a href="#/folders/${f.id}" class="cover">${f.cover ? `<img src="${media(f.cover)}" alt="">` : ''}${fbadge(f)}</a>
+    <b>${esc(f.name)}</b><span class="muted">${bits}</span>
+    ${reorder ? `<div class="mover"><button data-mv="-1" aria-label="Move earlier">${icon('arrowup')}</button><button data-mv="1" aria-label="Move later">${icon('arrowdown')}</button></div>` : ''}</div>`;
+}
+function savedItem(p, layout, reorder) {
+  const cover = p.cover || (p.kind === 'photo' ? p.media : null);
+  const title = p.title || p.body || '';
+  const mover = reorder ? `<div class="mover"><button data-mv="-1" aria-label="Move earlier">${icon('arrowup')}</button><button data-mv="1" aria-label="Move later">${icon('arrowdown')}</button><button data-rm aria-label="Remove from folder">${icon('close')}</button></div>` : '';
+  if (layout === 'list') return `<div class="sitem row-item" data-pid="${p.id}"><a href="${postLink(p)}" class="si-thumb">${cover ? `<img src="${media(cover)}" alt="" loading="lazy">` : icon(KIND[p.kind][1])}</a>
+    <a href="${postLink(p)}" class="grow"><b>${esc(title.slice(0, 90))}</b><span class="muted">${icon(KIND[p.kind][1])}${KIND[p.kind][0]} · ${esc(p.author.display_name)}</span></a>${mover}</div>`;
+  return `<div class="sitem tile-item" data-pid="${p.id}"><a href="${postLink(p)}" class="si-thumb ${p.kind === 'short' ? 'tall' : ''}">${cover ? `<img src="${media(cover)}" alt="" loading="lazy">` : `<span class="si-text">${esc(title.slice(0, 120))}</span>`}<span class="si-kind">${icon(KIND[p.kind][1])}</span></a>
+    <a href="${postLink(p)}"><b>${esc(title.slice(0, 70))}</b><span class="muted">${esc(p.author.display_name)}</span></a>${mover}</div>`;
+}
+function folderRail(f) {
+  const n = (k) => (k ? f.posts.filter((p) => k.split(',').includes(p.kind)).length : f.posts.length);
+  $('#rrail').innerHTML = `<div class="label">In this folder</div>
+    ${FKINDS.map(([k, l, ic]) => `<button class="ftab ${k === folderFilter ? 'on' : ''}" data-k="${k}">${icon(ic)}<span class="grow">${l}</span><small>${n(k)}</small></button>`).join('')}`;
+  $$('#rrail .ftab').forEach((b) => (b.onclick = () => { folderFilter = b.dataset.k; closeDrawers(); folderRail(f); drawFolder(f); }));
+}
+let folderReorder = false;
+function drawFolder(f) {
+  const items = folderFilter ? f.posts.filter((p) => folderFilter.split(',').includes(p.kind)) : f.posts;
+  const box = $('#fbody');
+  box.innerHTML = `${f.children.length ? `<h4 class="fsec">Folders</h4><div class="fgrid">${f.children.map((c) => folderTile(c, folderReorder)).join('')}</div>` : ''}
+    <h4 class="fsec">${folderFilter ? FKINDS.find((k) => k[0] === folderFilter)[1] : 'Saved'}</h4>
+    <div class="sitems layout-${f.layout}" id="fposts"></div>`;
+  const list = $('#fposts');
+  if (!items.length) list.innerHTML = `<div class="empty">${f.posts.length ? 'Nothing in this format here.' : 'Nothing saved here yet. Use ••• then “Save to a folder” on anything you want to keep.'}</div>`;
+  else if (f.layout === 'large' && !folderReorder) items.forEach((p) => list.append(postEl(p)));
+  else list.innerHTML = items.map((p) => savedItem(p, f.layout === 'list' ? 'list' : 'grid', folderReorder)).join('');
+  // Reordering swaps neighbours (within the visible format) and saves the whole order.
+  $$('.folder [data-mv]', box).forEach((b) => (b.onclick = async () => {
+    const i = f.children.findIndex((c) => c.id === +b.closest('[data-fid]').dataset.fid), j = i + +b.dataset.mv;
+    if (j < 0 || j >= f.children.length) return;
+    [f.children[i], f.children[j]] = [f.children[j], f.children[i]];
+    drawFolder(f);
+    await api('/folders/reorder', { body: { ids: f.children.map((c) => c.id) } });
+  }));
+  $$('.sitem [data-mv]', box).forEach((b) => (b.onclick = async () => {
+    const pid = +b.closest('[data-pid]').dataset.pid, vi = items.findIndex((p) => p.id === pid), other = items[vi + +b.dataset.mv];
+    if (!other) return;
+    const i = f.posts.indexOf(items[vi]), j = f.posts.indexOf(other);
+    [f.posts[i], f.posts[j]] = [f.posts[j], f.posts[i]];
+    drawFolder(f);
+    await api(`/folders/${f.id}/reorder`, { body: { post_ids: f.posts.map((p) => p.id) } });
+  }));
+  $$('.sitem [data-rm]', box).forEach((b) => (b.onclick = async () => {
+    const pid = +b.closest('[data-pid]').dataset.pid;
+    await api(`/folders/${f.id}/toggle`, { body: { post_id: pid } });
+    f.posts = f.posts.filter((p) => p.id !== pid);
+    folderRail(f); drawFolder(f); toast(`Removed from ${f.name}`);
+  }));
+}
+// One sheet for making and customizing a folder: name, color, icon, tile shape, layout, and where it lives.
+async function folderSheet(f, { parentId = null, onDone } = {}) {
+  const isNew = !f;
+  const cur = { name: '', color: 'tq', icon: 'folder', shape: 'rounded', layout: 'grid', parent_id: parentId, ...(f || {}) };
+  const all = await api('/folders');
+  const places = folderTree(all, f?.id);
+  const pick = (key, opts, render) => `<div class="pickrow" data-key="${key}">${opts.map((o) => `<button type="button" class="pk-opt ${cur[key] === o ? 'on' : ''}" data-v="${o}">${render(o)}</button>`).join('')}</div>`;
+  const sheet = openSheet(`<h3>${isNew ? 'New folder' : 'Customize folder'}</h3>
+    <form id="fs" class="fs">
+      <div class="fs-preview" id="fs-prev"></div>
+      <div class="field"><label for="fs-name">Name</label><input id="fs-name" name="name" maxlength="60" value="${esc(cur.name)}" placeholder="Folder name" autocomplete="off"></div>
+      <div class="field"><label>Color</label>${pick('color', Object.keys(FCOLORS), (c) => `<span class="swatch" style="background:${FCOLORS[c]}"></span>`)}</div>
+      <div class="field"><label>Icon</label>${pick('icon', FICONS, (i) => icon(i))}</div>
+      <div class="field"><label>Tile shape</label>${pick('shape', ['rounded', 'square', 'circle'], (s) => `<span class="shape-demo ${s}"></span>${s[0].toUpperCase() + s.slice(1)}`)}</div>
+      <div class="field"><label>Show saved items as</label>${pick('layout', ['grid', 'list', 'large'], (l) => icon(l) + { grid: 'Grid', list: 'List', large: 'Full posts' }[l])}</div>
+      <div class="field"><label for="fs-parent">Inside</label><select id="fs-parent" name="parent"><option value="">Top level</option>${places.map((p) => `<option value="${p.id}" ${String(p.id) === String(cur.parent_id ?? '') ? 'selected' : ''}>${'– '.repeat(p.depth)}${esc(p.name)}</option>`).join('')}</select></div>
+      <div class="err" id="fs-err"></div>
+      <button class="btn primary block">${isNew ? 'Create folder' : 'Save changes'}</button>
+      ${isNew ? '' : `<button type="button" class="btn danger block" id="fs-del" style="margin-top:8px">${icon('trash')}Delete folder</button>`}
+    </form>`);
+  const preview = () => { $('#fs-prev', sheet).innerHTML = folderTile({ ...cur, name: $('#fs-name', sheet).value || 'Folder name', total: f?.total || 0, folders: f?.folders || 0, cover: null }); };
+  $$('.pickrow', sheet).forEach((row) => $$('.pk-opt', row).forEach((b) => (b.onclick = () => {
+    cur[row.dataset.key] = b.dataset.v;
+    $$('.pk-opt', row).forEach((x) => x.classList.toggle('on', x === b));
+    preview();
+  })));
+  $('#fs-name', sheet).oninput = preview;
+  preview();
+  if (isNew) $('#fs-name', sheet).focus();
+  $('#fs', sheet).onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { name: $('#fs-name', sheet).value.trim(), color: cur.color, icon: cur.icon, shape: cur.shape, layout: cur.layout, parent_id: $('#fs-parent', sheet).value || null };
+    if (!body.name) return ($('#fs-err', sheet).textContent = 'Name the folder');
+    try {
+      const saved = isNew ? await api('/folders', { body }) : await api('/folders/' + f.id, { method: 'PATCH', body });
+      closeSheet(); toast(isNew ? `Made ${saved.name}` : 'Folder updated'); onDone?.(saved);
+    } catch (err) { $('#fs-err', sheet).textContent = err.message; }
+  };
+  if ($('#fs-del', sheet)) $('#fs-del', sheet).onclick = (e) => {
+    const b = e.currentTarget;
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.lastChild.textContent = f.folders ? 'Tap again: deletes the folders inside too' : 'Tap again to delete'; return; }
+    api('/folders/' + f.id, { method: 'DELETE' }).then(() => { closeSheet(); toast('Folder deleted'); location.hash = f.parent_id ? '#/folders/' + f.parent_id : '#/folders'; });
   };
 }
+async function foldersView(id) {
+  if (!id) {
+    const all = await api('/folders');
+    const top = all.filter((f) => !f.parent_id);
+    const draw = () => {
+      view.innerHTML = `<div class="page"><div class="ftools"><button class="btn small primary" id="newf">${icon('newfolder')}New folder</button><button class="btn small ${folderReorder ? 'on' : ''}" id="ford">${icon('reorder')}${folderReorder ? 'Done' : 'Reorder'}</button></div>
+        <div class="fgrid">${top.map((f) => folderTile(f, folderReorder)).join('')}</div></div>`;
+      $('#newf').onclick = () => folderSheet(null, { onDone: (n) => (location.hash = '#/folders/' + n.id) });
+      $('#ford').onclick = () => { folderReorder = !folderReorder; draw(); };
+      $$('[data-mv]').forEach((b) => (b.onclick = async () => {
+        const i = top.findIndex((c) => c.id === +b.closest('[data-fid]').dataset.fid), j = i + +b.dataset.mv;
+        if (j < 0 || j >= top.length) return;
+        [top[i], top[j]] = [top[j], top[i]];
+        draw();
+        await api('/folders/reorder', { body: { ids: top.map((c) => c.id) } });
+      }));
+    };
+    draw();
+    return;
+  }
+  const f = await api('/folders/' + id);
+  if (folderView.id !== f.id) { folderFilter = ''; folderView.id = f.id; }
+  setTitle(f.name);
+  view.innerHTML = `<div class="page">
+    <nav class="crumbs"><a href="#/folders">Folders</a>${f.path.map((p) => `<span>›</span><a href="#/folders/${p.id}">${esc(p.name)}</a>`).join('')}<span>›</span><b>${esc(f.name)}</b></nav>
+    <div class="fhead" style="--fc:${fcolor(f)}">${fbadge(f)}<div class="grow"><h2>${esc(f.name)}</h2><span class="muted">${f.count} saved here${f.children.length ? ` · ${f.children.length} folder${f.children.length > 1 ? 's' : ''}` : ''}</span></div></div>
+    <div class="ftools"><button class="btn small" id="fsub">${icon('newfolder')}New folder inside</button><button class="btn small" id="fedit">${icon('edit')}Customize</button><button class="btn small ${folderReorder ? 'on' : ''}" id="ford">${icon('reorder')}${folderReorder ? 'Done' : 'Reorder'}</button></div>
+    <div id="fbody"></div></div>`;
+  folderRail(f);
+  drawFolder(f);
+  $('#fsub').onclick = () => folderSheet(null, { parentId: f.id, onDone: () => foldersView(id) });
+  $('#fedit').onclick = () => folderSheet(f, { onDone: () => foldersView(id) });
+  $('#ford').onclick = (e) => { folderReorder = !folderReorder; e.currentTarget.classList.toggle('on', folderReorder); e.currentTarget.lastChild.textContent = folderReorder ? 'Done' : 'Reorder'; drawFolder(f); };
+}
+const folderView = { id: null };
 
 async function subsView() {
   const [subs, posts] = await Promise.all([api('/subscriptions'), api('/feed?scope=subs&limit=60')]);
@@ -720,9 +875,11 @@ async function onRoute() {
   if (section === 'u' && parts[1] === me.username) section = 'me';
   const kinds = new URLSearchParams(query || '').get('kinds');
   if (kinds !== null) feedFilter = kinds;
+  if (section !== 'folders') folderReorder = false;
   route.section = section;
-  document.body.classList.toggle('has-rrail', section === 'home');
-  $('#open-r').hidden = section !== 'home';
+  const hasRail = section === 'home' || (section === 'folders' && !!parts[1]);
+  document.body.classList.toggle('has-rrail', hasRail);
+  $('#open-r').hidden = !hasRail;
   renderRail();
   $$('#lnav [data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (section === 'watch' ? 'long' : section === 'p' ? 'home' : section)));
   setTitle(TITLES[section] || 'Gallium');

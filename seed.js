@@ -100,9 +100,18 @@ rm('chefkai', 'idea', 'Creator tips and memberships', 'A way for fans to support
 // Reposts from creators the demo account subscribes to, and a starter folder.
 db.prepare('INSERT INTO reposts (post_id, user_id) VALUES (?, ?)').run(P[10], ids.maya);
 db.prepare('INSERT INTO reposts (post_id, user_id) VALUES (?, ?)').run(P[3], ids.nova);
-const wl = db.prepare("INSERT INTO folders (user_id, name) VALUES (?, 'Watch later')").run(ids.demo).lastInsertRowid;
-db.prepare('INSERT INTO saves (folder_id, post_id) VALUES (?, ?)').run(wl, P[6]);
-db.prepare("INSERT INTO folders (user_id, name) VALUES (?, 'Recipes')").run(ids.demo);
+// Demo folders, nested a few levels deep with their own colors, icons and layouts.
+const folder = (name, style, parent, posts) => {
+  const id = db.prepare('INSERT INTO folders (user_id, name, parent_id, position, color, icon, layout, shape) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(ids.demo, name, parent, style.pos, style.color, style.icon, style.layout || 'grid', style.shape || 'rounded').lastInsertRowid;
+  posts.forEach((pid, i) => db.prepare('INSERT INTO saves (folder_id, post_id, position) VALUES (?, ?, ?)').run(id, pid, i));
+  return id;
+};
+folder('Watch later', { pos: 0, color: 'tq', icon: 'bookmark' }, null, [P[3], P[10]]);
+const food = folder('Food', { pos: 1, color: 'pk', icon: 'chef' }, null, [P[8]]);
+const quick = folder('Quick meals', { pos: 0, color: 'green', icon: 'bolt' }, food, [P[6]]);
+folder('Late night', { pos: 0, color: 'violet', icon: 'moon', shape: 'circle' }, quick, [P[16]]);
+folder('Study music', { pos: 2, color: 'violet', icon: 'music', layout: 'list' }, null, [P[22], P[14], P[9]]);
 
 db.close();
 console.log(`Seeded ${users.length} users and ${P.length} posts. Sign in as demo / gallium123`);

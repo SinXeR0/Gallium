@@ -1,7 +1,7 @@
 // Browser-only stand-in for Gallium's server, so the app runs from a link with nothing installed.
 // Same routes and the same feed ranking as server.js; data lives in this browser.
 (function () {
-  const KEY = 'gallium-demo-v2';
+  const KEY = 'gallium-demo-v3';
   const KINDS = ['text', 'photo', 'short', 'video', 'track'];
   const kindLabel = (k) => ({ text: 'text posts', photo: 'photos', short: 'shorts', video: 'videos', track: 'music' }[k]);
   const stamp = (d = new Date()) => d.toISOString().replace('T', ' ').slice(0, 19);
@@ -93,9 +93,17 @@
       else if (r < 0.55) S.dislikes.push({ post_id: pid, user_id: ids[u] });
     }
     S.reposts.push({ post_id: P[10], user_id: ids.maya, created_at: stamp() }, { post_id: P[3], user_id: ids.nova, created_at: stamp() });
-    const wl = nextId('folders');
-    S.folders.push({ id: wl, user_id: ids.demo, name: 'Watch later', created_at: stamp() }, { id: nextId('folders'), user_id: ids.demo, name: 'Recipes', created_at: stamp() });
-    S.saves.push({ folder_id: wl, post_id: P[6], created_at: stamp() });
+    const folder = (name, style, parent, posts) => {
+      const id = nextId('folders');
+      S.folders.push({ id, user_id: ids.demo, name, parent_id: parent, position: style.pos, color: style.color, icon: style.icon, layout: style.layout || 'grid', shape: style.shape || 'rounded', created_at: stamp() });
+      posts.forEach((pid, i) => S.saves.push({ folder_id: id, post_id: pid, position: i, created_at: stamp() }));
+      return id;
+    };
+    folder('Watch later', { pos: 0, color: 'tq', icon: 'bookmark' }, null, [P[3], P[10]]);
+    const food = folder('Food', { pos: 1, color: 'pk', icon: 'chef' }, null, [P[8]]);
+    const quick = folder('Quick meals', { pos: 0, color: 'green', icon: 'bolt' }, food, [P[6]]);
+    folder('Late night', { pos: 0, color: 'violet', icon: 'moon', shape: 'circle' }, quick, [P[16]]);
+    folder('Study music', { pos: 2, color: 'violet', icon: 'music', layout: 'list' }, null, [P[22], P[14], P[9]]);
     const comment = (pid, u, body) => S.comments.push({ id: nextId('comments'), post_id: pid, user_id: ids[u], body, created_at: stamp() });
     comment(P[0], 'jaylen', 'Where is this?!');
     comment(P[0], 'astro_lee', 'Those colors are unreal.');
@@ -297,35 +305,75 @@
     const pid = +params.id, people = (t) => S[t].filter((x) => x.post_id === pid).map((x) => publicUser(userById(x.user_id)));
     return { likers: people('likes'), reposters: people('reposts'), likes: count('likes', pid), dislikes: count('dislikes', pid), reposts: count('reposts', pid), comments: count('comments', pid), saves: S.saves.filter((s) => s.post_id === pid).length };
   });
-  const ensureFolders = (uid) => { if (!S.folders.some((f) => f.user_id === uid)) S.folders.push({ id: nextId('folders'), user_id: uid, name: 'Watch later', created_at: stamp() }); };
+  // Folders nest without limit; mirrors the folder routes in server.js.
+  const FOLDER_STYLE = { color: ['tq', 'pk', 'violet', 'blue', 'green', 'yellow', 'red', 'white'],
+    icon: ['folder', 'star', 'heart', 'music', 'film', 'book', 'chef', 'game', 'bolt', 'pin', 'bookmark', 'moon'],
+    layout: ['grid', 'list', 'large'], shape: ['rounded', 'square', 'circle'] };
+  const newFolder = (uid, name, parent_id = null, style = {}) => {
+    const position = S.folders.filter((f) => f.user_id === uid && (f.parent_id ?? null) === parent_id).reduce((m, f) => Math.max(m, f.position ?? 0), -1) + 1;
+    const f = { id: nextId('folders'), user_id: uid, name, parent_id, position, color: 'tq', icon: 'folder', layout: 'grid', shape: 'rounded', ...style, created_at: stamp() };
+    S.folders.push(f); return f;
+  };
+  const ensureFolders = (uid) => { if (!S.folders.some((f) => f.user_id === uid)) newFolder(uid, 'Watch later'); };
   const postById = (id) => S.posts.find((p) => p.id === id);
+  const ownFolder = (id, uid) => S.folders.find((x) => x.id === Number(id) && x.user_id === uid);
+  const bySpot = (a, b) => (a.position ?? 0) - (b.position ?? 0) || a.id - b.id;
+  const subtreeIds = (id) => { const ids = [id]; for (let i = 0; i < ids.length; i++) S.folders.forEach((f) => f.parent_id === ids[i] && ids.push(f.id)); return ids; };
+  const cleanStyle = (body) => Object.fromEntries(Object.keys(FOLDER_STYLE).filter((k) => FOLDER_STYLE[k].includes(body?.[k])).map((k) => [k, body[k]]));
+  const folderSummary = (f, pid) => {
+    const tree = new Set(subtreeIds(f.id)), all = S.saves.filter((s) => tree.has(s.folder_id)).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const latest = all[0] && postById(all[0].post_id);
+    return { ...f, parent_id: f.parent_id ?? null, count: S.saves.filter((s) => s.folder_id === f.id).length, folders: S.folders.filter((c) => c.parent_id === f.id).length, total: all.length,
+      cover: latest ? (latest.cover || (latest.kind === 'photo' ? latest.media : null)) : null, contains: !!pid && S.saves.some((s) => s.folder_id === f.id && s.post_id === pid) };
+  };
   on('GET', '/folders', ({ me, query }) => {
     ensureFolders(me.id);
     const pid = Number(query.get('post')) || 0;
-    return S.folders.filter((f) => f.user_id === me.id).map((f) => {
-      const inside = S.saves.filter((s) => s.folder_id === f.id).sort((a, b) => b.created_at.localeCompare(a.created_at));
-      const latest = inside[0] && postById(inside[0].post_id);
-      return { ...f, count: inside.length, cover: latest ? (latest.cover || (latest.kind === 'photo' ? latest.media : null)) : null, contains: inside.some((s) => s.post_id === pid) };
-    });
+    return S.folders.filter((f) => f.user_id === me.id).sort(bySpot).map((f) => folderSummary(f, pid));
   });
+  on('POST', '/folders/reorder', ({ me, body }) => { (body?.ids || []).forEach((id, i) => { const f = ownFolder(id, me.id); if (f) f.position = i; }); return { ok: true }; });
   on('POST', '/folders', ({ me, body }) => {
     const name = String(body?.name || '').trim().slice(0, 60); if (!name) fail(400, 'Name the folder');
-    const id = nextId('folders'); S.folders.push({ id, user_id: me.id, name, created_at: stamp() });
-    return { id, name };
+    const parent = body?.parent_id ? ownFolder(body.parent_id, me.id) : null;
+    if (body?.parent_id && !parent) fail(404, 'Folder not found');
+    return newFolder(me.id, name, parent ? parent.id : null, cleanStyle(body));
+  });
+  on('PATCH', '/folders/:id', ({ me, params, body }) => {
+    const f = ownFolder(params.id, me.id); if (!f) fail(404, 'Not found');
+    if (body?.parent_id !== undefined) {
+      const pid = body.parent_id ? Number(body.parent_id) : null;
+      if (pid && (!ownFolder(pid, me.id) || subtreeIds(f.id).includes(pid))) fail(400, "A folder can't go inside itself");
+      f.parent_id = pid;
+    }
+    if (body?.name !== undefined) f.name = String(body.name).trim().slice(0, 60) || f.name;
+    Object.assign(f, cleanStyle(body));
+    return f;
   });
   on('DELETE', '/folders/:id', ({ me, params }) => {
-    S.folders = S.folders.filter((f) => !(f.id === +params.id && f.user_id === me.id));
-    S.saves = S.saves.filter((s) => s.folder_id !== +params.id);
+    if (!ownFolder(params.id, me.id)) fail(404, 'Not found');
+    const gone = new Set(subtreeIds(+params.id));
+    S.folders = S.folders.filter((f) => !gone.has(f.id));
+    S.saves = S.saves.filter((s) => !gone.has(s.folder_id));
     return { ok: true };
   });
   on('GET', '/folders/:id', ({ me, params }) => {
-    const f = S.folders.find((x) => x.id === +params.id && x.user_id === me.id); if (!f) fail(404, 'Not found');
-    return { ...f, posts: S.saves.filter((s) => s.folder_id === f.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((s) => postById(s.post_id)).filter(Boolean).map((p) => hydrate(p, me.id)) };
+    const f = ownFolder(params.id, me.id); if (!f) fail(404, 'Not found');
+    const path = [];
+    for (let p = f.parent_id; p; ) { const up = ownFolder(p, me.id); if (!up) break; path.unshift({ id: up.id, name: up.name }); p = up.parent_id; }
+    return { ...folderSummary(f), path, children: S.folders.filter((c) => c.parent_id === f.id).sort(bySpot).map((c) => folderSummary(c)),
+      posts: S.saves.filter((s) => s.folder_id === f.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || b.created_at.localeCompare(a.created_at))
+        .map((s) => postById(s.post_id)).filter(Boolean).map((p) => hydrate(p, me.id)) };
+  });
+  on('POST', '/folders/:id/reorder', ({ me, params, body }) => {
+    const f = ownFolder(params.id, me.id); if (!f) fail(404, 'Not found');
+    (body?.post_ids || []).forEach((pid, i) => { const s = S.saves.find((x) => x.folder_id === f.id && x.post_id === Number(pid)); if (s) s.position = i; });
+    return { ok: true };
   });
   on('POST', '/folders/:id/toggle', ({ me, params, body }) => {
-    const f = S.folders.find((x) => x.id === +params.id && x.user_id === me.id); if (!f) fail(404, 'Not found');
+    const f = ownFolder(params.id, me.id); if (!f) fail(404, 'Not found');
     const pid = Number(body?.post_id), had = S.saves.some((s) => s.folder_id === f.id && s.post_id === pid);
-    if (had) S.saves = S.saves.filter((s) => !(s.folder_id === f.id && s.post_id === pid)); else S.saves.push({ folder_id: f.id, post_id: pid, created_at: stamp() });
+    if (had) S.saves = S.saves.filter((s) => !(s.folder_id === f.id && s.post_id === pid));
+    else S.saves.push({ folder_id: f.id, post_id: pid, position: S.saves.filter((s) => s.folder_id === f.id).reduce((m, s) => Math.min(m, s.position ?? 0), 1) - 1, created_at: stamp() });
     return { saved: !had, folder: f.name };
   });
   on('GET', '/subscriptions', ({ me }) => S.follows.filter((f) => f.follower_id === me.id).map((f) => publicUser(userById(f.followee_id))).sort((a, b) => a.display_name.localeCompare(b.display_name)));

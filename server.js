@@ -297,40 +297,102 @@ app.get('/api/posts/:id/interactions', auth, (req, res) => {
 });
 
 // ---------- folders (saved posts) ----------
+// Folders nest without limit. Each one has its own order, color, icon, tile shape and layout for what's inside.
+const FOLDER_STYLE = { color: ['tq', 'pk', 'violet', 'blue', 'green', 'yellow', 'red', 'white'],
+  icon: ['folder', 'star', 'heart', 'music', 'film', 'book', 'chef', 'game', 'bolt', 'pin', 'bookmark', 'moon'],
+  layout: ['grid', 'list', 'large'], shape: ['rounded', 'square', 'circle'] };
 function ensureFolders(userId) {
   if (!db.prepare('SELECT 1 FROM folders WHERE user_id = ?').get(userId)) db.prepare("INSERT INTO folders (user_id, name) VALUES (?, 'Watch later')").run(userId);
 }
+const ownFolder = (id, userId) => db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(id, userId);
+const coverOf = (p) => (p ? p.cover || (p.kind === 'photo' ? p.media : null) : null);
+// Everything below a folder, so counts and covers include sub-folders.
+function subtreeIds(id) {
+  const ids = [id];
+  for (let i = 0; i < ids.length; i++) for (const c of db.prepare('SELECT id FROM folders WHERE parent_id = ?').all(ids[i])) ids.push(c.id);
+  return ids;
+}
+function folderSummary(f, postId) {
+  const tree = subtreeIds(f.id), marks = tree.map(() => '?').join(',');
+  const latest = db.prepare(`SELECT p.* FROM saves s JOIN posts p ON p.id = s.post_id WHERE s.folder_id IN (${marks}) ORDER BY s.created_at DESC LIMIT 1`).get(...tree);
+  return { ...f, count: db.prepare('SELECT COUNT(*) n FROM saves WHERE folder_id = ?').get(f.id).n,
+    folders: db.prepare('SELECT COUNT(*) n FROM folders WHERE parent_id = ?').get(f.id).n,
+    total: db.prepare(`SELECT COUNT(*) n FROM saves WHERE folder_id IN (${marks})`).get(...tree).n,
+    cover: coverOf(latest), contains: postId ? !!db.prepare('SELECT 1 FROM saves WHERE folder_id = ? AND post_id = ?').get(f.id, postId) : false };
+}
+function cleanStyle(body) {
+  const out = {};
+  for (const k of Object.keys(FOLDER_STYLE)) if (FOLDER_STYLE[k].includes(body?.[k])) out[k] = body[k];
+  return out;
+}
+// Flat list of every folder (the app builds the tree). ?post= marks the folders that already hold that post.
 app.get('/api/folders', auth, (req, res) => {
   ensureFolders(req.user.id);
   const postId = Number(req.query.post) || 0;
-  res.json(db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY id').all(req.user.id).map((f) => {
-    const latest = db.prepare('SELECT p.* FROM saves s JOIN posts p ON p.id = s.post_id WHERE s.folder_id = ? ORDER BY s.created_at DESC LIMIT 1').get(f.id);
-    return { ...f, count: db.prepare('SELECT COUNT(*) n FROM saves WHERE folder_id = ?').get(f.id).n, cover: latest ? (latest.cover || (latest.kind === 'photo' ? latest.media : null)) : null,
-      contains: !!db.prepare('SELECT 1 FROM saves WHERE folder_id = ? AND post_id = ?').get(f.id, postId) };
-  }));
+  res.json(db.prepare('SELECT * FROM folders WHERE user_id = ? ORDER BY position, id').all(req.user.id).map((f) => folderSummary(f, postId)));
 });
 app.post('/api/folders', auth, (req, res) => {
   const name = String(req.body?.name || '').trim().slice(0, 60);
   if (!name) return res.status(400).json({ error: 'Name the folder' });
-  const info = db.prepare('INSERT INTO folders (user_id, name) VALUES (?, ?)').run(req.user.id, name);
-  res.json({ id: Number(info.lastInsertRowid), name });
+  const parent = req.body?.parent_id ? ownFolder(req.body.parent_id, req.user.id) : null;
+  if (req.body?.parent_id && !parent) return res.status(404).json({ error: 'Folder not found' });
+  const style = { color: 'tq', icon: 'folder', layout: 'grid', shape: 'rounded', ...cleanStyle(req.body) };
+  const pos = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 n FROM folders WHERE user_id = ? AND parent_id IS ?').get(req.user.id, parent?.id ?? null).n;
+  const info = db.prepare('INSERT INTO folders (user_id, name, parent_id, position, color, icon, layout, shape) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(req.user.id, name, parent?.id ?? null, pos, style.color, style.icon, style.layout, style.shape);
+  res.json(ownFolder(info.lastInsertRowid, req.user.id));
+});
+// Rename, restyle or move a folder.
+app.patch('/api/folders/:id', auth, (req, res) => {
+  const f = ownFolder(req.params.id, req.user.id);
+  if (!f) return res.status(404).json({ error: 'Not found' });
+  const next = { ...f, ...cleanStyle(req.body) };
+  if (req.body?.name !== undefined) next.name = String(req.body.name).trim().slice(0, 60) || f.name;
+  if (req.body?.parent_id !== undefined) {
+    const pid = req.body.parent_id ? Number(req.body.parent_id) : null;
+    if (pid && (!ownFolder(pid, req.user.id) || subtreeIds(f.id).includes(pid))) return res.status(400).json({ error: "A folder can't go inside itself" });
+    next.parent_id = pid;
+  }
+  db.prepare('UPDATE folders SET name = ?, parent_id = ?, color = ?, icon = ?, layout = ?, shape = ? WHERE id = ?')
+    .run(next.name, next.parent_id, next.color, next.icon, next.layout, next.shape, f.id);
+  res.json(ownFolder(f.id, req.user.id));
 });
 app.delete('/api/folders/:id', auth, (req, res) => {
-  db.prepare('DELETE FROM folders WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  if (!ownFolder(req.params.id, req.user.id)) return res.status(404).json({ error: 'Not found' });
+  for (const id of subtreeIds(Number(req.params.id)).reverse()) db.prepare('DELETE FROM folders WHERE id = ?').run(id);
+  res.json({ ok: true });
+});
+// Set the order of sibling folders: { ids: [folder ids in order] }.
+app.post('/api/folders/reorder', auth, (req, res) => {
+  (req.body?.ids || []).forEach((id, i) => db.prepare('UPDATE folders SET position = ? WHERE id = ? AND user_id = ?').run(i, id, req.user.id));
   res.json({ ok: true });
 });
 app.get('/api/folders/:id', auth, (req, res) => {
-  const f = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  const f = ownFolder(req.params.id, req.user.id);
   if (!f) return res.status(404).json({ error: 'Not found' });
-  res.json({ ...f, posts: db.prepare('SELECT p.* FROM saves s JOIN posts p ON p.id = s.post_id WHERE s.folder_id = ? ORDER BY s.created_at DESC').all(f.id).map((p) => hydrate(p, req.user.id)) });
+  const path = [];
+  for (let p = f.parent_id; p; ) { const up = ownFolder(p, req.user.id); if (!up) break; path.unshift({ id: up.id, name: up.name }); p = up.parent_id; }
+  res.json({ ...folderSummary(f), path,
+    children: db.prepare('SELECT * FROM folders WHERE parent_id = ? ORDER BY position, id').all(f.id).map((c) => folderSummary(c)),
+    posts: db.prepare('SELECT p.* FROM saves s JOIN posts p ON p.id = s.post_id WHERE s.folder_id = ? ORDER BY s.position, s.created_at DESC').all(f.id).map((p) => hydrate(p, req.user.id)) });
+});
+// Set the order of the saved posts in a folder: { post_ids: [...] }.
+app.post('/api/folders/:id/reorder', auth, (req, res) => {
+  const f = ownFolder(req.params.id, req.user.id);
+  if (!f) return res.status(404).json({ error: 'Not found' });
+  (req.body?.post_ids || []).forEach((pid, i) => db.prepare('UPDATE saves SET position = ? WHERE folder_id = ? AND post_id = ?').run(i, f.id, pid));
+  res.json({ ok: true });
 });
 app.post('/api/folders/:id/toggle', auth, (req, res) => {
-  const f = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  const f = ownFolder(req.params.id, req.user.id);
   if (!f) return res.status(404).json({ error: 'Not found' });
   const pid = Number(req.body?.post_id);
   const had = db.prepare('SELECT 1 FROM saves WHERE folder_id = ? AND post_id = ?').get(f.id, pid);
   if (had) db.prepare('DELETE FROM saves WHERE folder_id = ? AND post_id = ?').run(f.id, pid);
-  else db.prepare('INSERT INTO saves (folder_id, post_id) VALUES (?, ?)').run(f.id, pid);
+  else { // new saves go to the top
+    const top = db.prepare('SELECT COALESCE(MIN(position), 1) - 1 n FROM saves WHERE folder_id = ?').get(f.id).n;
+    db.prepare('INSERT INTO saves (folder_id, post_id, position) VALUES (?, ?, ?)').run(f.id, pid, top);
+  }
   res.json({ saved: !had, folder: f.name });
 });
 
