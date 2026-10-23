@@ -223,7 +223,7 @@ const fbadge = (f) => `<span class="fbadge ${f.icon_style === 'image' && f.icon_
 // The emoji list is ~40 KB, so it loads the first time someone opens the picker.
 function loadEmoji() {
   if (window.GALLIUM_EMOJI) return Promise.resolve(window.GALLIUM_EMOJI);
-  return (loadEmoji.p ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'emoji.js?v=1792450900'; sc.onload = () => ok(window.GALLIUM_EMOJI); sc.onerror = bad; document.head.append(sc); }));
+  return (loadEmoji.p ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'emoji.js?v=1792789260'; sc.onload = () => ok(window.GALLIUM_EMOJI); sc.onerror = bad; document.head.append(sc); }));
 }
 // ---------- color math for the wheel ----------
 function hsvToHex(h, s, v) {
