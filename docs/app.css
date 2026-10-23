@@ -52,7 +52,7 @@ body.has-player { --player-h: 68px; }
 /* ---------- left rail ---------- */
 .lnav { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: var(--rail-l); padding: max(14px, env(safe-area-inset-top)) 8px max(14px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); display: flex; flex-direction: column; align-items: stretch; gap: 2px; background: var(--bg); border-right: 1px solid var(--line); overflow-y: auto; scrollbar-width: none; }
 .lnav .brand { display: grid; place-items: center; padding: 4px 0 14px; }
-.nav-i { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 2px; border-radius: 14px; color: var(--pk); font-size: 11px; font-weight: 600; text-align: center; }
+.nav-i { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 2px; border-radius: 14px; color: var(--pk); font-size: 12.5px; font-weight: 600; text-align: center; }
 .nav-i span { color: var(--muted); line-height: 1.15; }
 .nav-i:hover { background: var(--surface-2); }
 .nav-i.active { background: var(--tq-soft); }
@@ -427,6 +427,32 @@ body.has-rrail .player { right: var(--rail-r); }
   .add-rule { grid-template-columns: 1fr 1fr; }
   .kind-picker button { font-size: 11px; padding: 12px 2px; }
   .vgrid { grid-template-columns: 1fr; }
+}
+/* Big screens: one column that grows to fill the space, never a multi-column wall. */
+@media (min-width: 1500px) {
+  :root { --rail-l: 108px; --rail-r: 200px; --top-h: 66px; }
+  html, body { font-size: 16.5px; }
+  .topbar h1 { font-size: 22px; }
+  .page { max-width: 820px; }
+  .page.wide { max-width: 1320px; }
+  .watch { max-width: 1120px; }
+  .nav-i { font-size: 13.5px; padding: 9px 2px; }
+  .nav-i svg.i { width: 26px; height: 26px; }
+  .nav-i .av { width: 32px; height: 32px; font-size: 14px; }
+  .ftab { font-size: 16px; padding: 14px; }
+  .ftab svg { width: 22px; height: 22px; }
+  .rrail .label { font-size: 12px; }
+}
+@media (min-width: 1900px) {
+  :root { --rail-l: 120px; --rail-r: 224px; --top-h: 72px; }
+  html, body { font-size: 18px; }
+  .topbar h1 { font-size: 24px; }
+  .page { max-width: 940px; }
+  .page.wide { max-width: 1500px; }
+  .watch { max-width: 1280px; }
+  .nav-i { font-size: 14.5px; }
+  .nav-i svg.i { width: 28px; height: 28px; }
+  .ftab { font-size: 17px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
